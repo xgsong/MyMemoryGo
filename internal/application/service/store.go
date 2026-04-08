@@ -1,0 +1,126 @@
+package service
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/xgsong/MyMemoryGo/internal/domain/entity"
+	domainService "github.com/xgsong/MyMemoryGo/internal/domain/service"
+	"github.com/xgsong/MyMemoryGo/internal/pkg/log"
+)
+
+// StoreMemoryRequest contains parameters for storing a memory.
+type StoreMemoryRequest struct {
+	Content  string
+	Path     string // Optional: if empty, auto-select based on source
+	Source   entity.SourceType
+	Metadata map[string]string
+}
+
+// StoreMemoryResponse contains the result of storing a memory.
+type StoreMemoryResponse struct {
+	Memory *entity.Memory
+}
+
+// StoreMemory stores a new memory with automatic embedding generation and indexing.
+// It abstracts the complexity of validation, embedding, storage, and indexing.
+func (s *MemoryApplicationService) StoreMemory(ctx context.Context, req *StoreMemoryRequest) (*StoreMemoryResponse, error) {
+	logger := log.GetLogger(ctx).With("source", req.Source)
+
+	logger.InfoContext(ctx, "storing memory", "content_length", len(req.Content), "path", req.Path)
+
+	// Validate request
+	if req.Content == "" {
+		return nil, fmt.Errorf("content cannot be empty")
+	}
+
+	// Determine path if not specified
+	path := req.Path
+	if path == "" {
+		path = s.determineDefaultPath(req.Source)
+	}
+
+	// Normalize path
+	path = domainService.NormalizePath(path)
+
+	// Determine source type if not set
+	source := req.Source
+	if source == "" {
+		source = domainService.DetermineSourceType(path)
+	}
+
+	// Create memory entity
+	now := time.Now()
+
+	// Calculate line numbers from content
+	contentLines := len(req.Content)
+	startLine := 1
+	endLine := 1
+	if contentLines > 0 {
+		// Count actual lines in content
+		for _, ch := range req.Content {
+			if ch == '\n' {
+				endLine++
+			}
+		}
+	}
+
+	// Generate unique ID based on path and line numbers
+	memoryID := domainService.GenerateID(path, startLine, endLine)
+
+	memory := &entity.Memory{
+		ID:        memoryID,
+		Path:      path,
+		Content:   req.Content,
+		Source:    source,
+		CreatedAt: now,
+		UpdatedAt: now,
+		StartLine: startLine,
+		EndLine:   endLine,
+		Checksum:  domainService.CalculateChecksum(req.Content),
+		Metadata:  req.Metadata,
+	}
+
+	// Validate memory
+	if err := domainService.ValidateMemory(memory); err != nil {
+		logger.WarnContext(ctx, "memory validation failed", "error", err)
+		return nil, fmt.Errorf("validation failed: %w", err)
+	}
+
+	// Generate embedding
+	embedding, err := s.embeddingRepo.Embed(ctx, memory.Content)
+	if err != nil {
+		logger.ErrorContext(ctx, "failed to generate embedding", "error", err)
+		return nil, fmt.Errorf("failed to generate embedding: %w", err)
+	}
+	memory.Embedding = embedding
+
+	// Store with write lock (SQLite concurrent write protection)
+	s.writeMutex.Lock()
+	defer s.writeMutex.Unlock()
+
+	// Store to repository (file + index)
+	if err := s.memoryRepo.Store(ctx, memory); err != nil {
+		logger.ErrorContext(ctx, "failed to store memory", "error", err, "memory_id", memory.ID)
+		return nil, fmt.Errorf("failed to store memory: %w", err)
+	}
+
+	logger.InfoContext(ctx, "memory stored successfully", "memory_id", memory.ID, "path", memory.Path)
+
+	return &StoreMemoryResponse{Memory: memory}, nil
+}
+
+// determineDefaultPath selects an appropriate path based on source type.
+func (s *MemoryApplicationService) determineDefaultPath(source entity.SourceType) string {
+	switch source {
+	case entity.SourceLongTerm:
+		return "MEMORY.md"
+	case entity.SourceDaily:
+		return fmt.Sprintf("memory/%s.md", time.Now().Format("2006-01-02"))
+	case entity.SourceSession:
+		return fmt.Sprintf("session/%s.md", time.Now().Format("20060102-150405"))
+	default:
+		return fmt.Sprintf("memory/%s.md", time.Now().Format("2006-01-02"))
+	}
+}

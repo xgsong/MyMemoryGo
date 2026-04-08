@@ -1,0 +1,71 @@
+# yaml-language-server: $schema=https://json.schemastore.org/yamllint.json
+
+# Workspace configuration
+workspace:
+  dir: ~/.memory/workspace
+
+# Embedding configuration
+embedding:
+  # Provider preset (openai-small, openai-large, ollama-nomic, ollama-minilm, vllm-bge-large)
+  preset: ollama-nomic
+  
+  # Custom configuration (overrides preset)
+  base_url: http://localhost:11434/v1
+  model: nomic-embed-text
+  dimensions: 768
+  api_key: ""  # Optional for local models
+  batch_size: 50
+  timeout: 60s
+  max_retries: 3
+  retry_delay: 1s
+
+# Storage configuration
+storage:
+  db_path: ~/.memory/memory.db
+  wal_mode: true
+  
+# Search configuration
+search:
+  vector_weight: 0.7
+  fulltext_weight: 0.3
+  default_limit: 10
+  min_score: 0.5
+  
+  # MMR (Maximal Marginal Relevance) reranking
+  mmr:
+    enabled: true
+    lambda: 0.7
+  
+  # Temporal decay
+  decay:
+    enabled: true
+    half_life: 720h  # 30 days
+
+# File watcher configuration
+watch:
+  enabled: true
+  debounce: 2s
+
+# Logging configuration
+logging:
+  level: info  # debug, info, warn, error
+  output: ~/.memory/logs/memory.log
+  format: json  # json or text
+
+# API server configuration (optional)
+api:
+  enabled: false
+  host: 0.0.0.0
+  port: 8080
+
+# Memory sources
+sources:
+  longterm: MEMORY.md
+  daily_pattern: memory/*.md
+  
+# Advanced settings
+advanced:
+  cache_size: 10000
+  concurrent_indexing: 10
+  chunk_size: 1000  # characters per chunk
+  embedding_cache_ttl: 24h
