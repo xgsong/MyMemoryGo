@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
+
+	"github.com/xgsong/MyMemoryGo/internal/pkg/errors"
 )
 
 func createSchema(db *sql.DB, vectorDims int) error {
@@ -141,7 +143,7 @@ func serializeEmbedding(embedding []float32) ([]byte, error) {
 
 func deserializeEmbedding(data []byte) ([]float32, error) {
 	if len(data)%4 != 0 {
-		return nil, fmt.Errorf("invalid embedding data length: %d", len(data))
+		return nil, errors.WrapOp(errors.CodeInvalidInput, "deserializeEmbedding", "invalid embedding data length", fmt.Errorf("length: %d", len(data)))
 	}
 
 	embedding := make([]float32, len(data)/4)

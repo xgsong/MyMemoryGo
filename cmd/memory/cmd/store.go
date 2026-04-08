@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/xgsong/MyMemoryGo/internal/application/service"
 	"github.com/xgsong/MyMemoryGo/internal/domain/entity"
+	"github.com/xgsong/MyMemoryGo/internal/pkg/errors"
 )
 
 // storeCmd represents the store command.
@@ -43,23 +44,19 @@ func init() {
 func runStore(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
-	// Initialize app
 	app, err := InitializeApp(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to initialize: %w", err)
+		return errors.WrapOp(errors.CodeInternal, "runStore", "failed to initialize", err)
 	}
 	defer app.Cleanup()
 
-	// Get content from args
 	content := args[0]
 	if len(args) > 1 {
-		// Join multiple args as content
 		for _, arg := range args[1:] {
 			content += " " + arg
 		}
 	}
 
-	// Determine source type
 	var source entity.SourceType
 	switch storeSource {
 	case "longterm":
@@ -69,7 +66,7 @@ func runStore(cmd *cobra.Command, args []string) error {
 	case "session":
 		source = entity.SourceSession
 	default:
-		return fmt.Errorf("invalid source type: %s (must be longterm, daily, or session)", storeSource)
+		return errors.New(errors.CodeInvalidInput, fmt.Sprintf("invalid source type: %s (must be longterm, daily, or session)", storeSource))
 	}
 
 	// Prepare metadata
@@ -78,7 +75,6 @@ func runStore(cmd *cobra.Command, args []string) error {
 		metadata["tags"] = storeTags
 	}
 
-	// Store memory
 	req := &service.StoreMemoryRequest{
 		Content:  content,
 		Path:     storePath,
@@ -88,7 +84,7 @@ func runStore(cmd *cobra.Command, args []string) error {
 
 	resp, err := app.MemoryApp.StoreMemory(ctx, req)
 	if err != nil {
-		return fmt.Errorf("failed to store memory: %w", err)
+		return errors.WrapOp(errors.CodeInternal, "runStore", "failed to store memory", err)
 	}
 
 	// Output result

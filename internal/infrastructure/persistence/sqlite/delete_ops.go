@@ -2,9 +2,8 @@ package sqlite
 
 import (
 	"context"
-	"fmt"
 
-	"github.com/xgsong/MyMemoryGo/internal/domain/errors"
+	"github.com/xgsong/MyMemoryGo/internal/pkg/errors"
 )
 
 // Delete removes a memory entry by ID.
@@ -14,29 +13,26 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
+		return errors.WrapOp(errors.CodeDatabase, "Delete", "begin transaction failed", err)
 	}
 	defer tx.Rollback()
 
-	// Delete from memories table
 	result, err := tx.StmtContext(ctx, s.stmtDelete).ExecContext(ctx, id)
 	if err != nil {
-		return fmt.Errorf("delete memory: %w", err)
+		return errors.WrapOp(errors.CodeDatabase, "Delete", "delete memory failed", err)
 	}
 
-	// Check if memory existed
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("get rows affected: %w", err)
+		return errors.WrapOp(errors.CodeDatabase, "Delete", "get rows affected failed", err)
 	}
 	if rows == 0 {
 		return errors.ErrNotFound
 	}
 
-	// Delete from FTS index
 	_, err = tx.ExecContext(ctx, "DELETE FROM memories_fts WHERE id = ?", id)
 	if err != nil {
-		return fmt.Errorf("delete from FTS: %w", err)
+		return errors.WrapOp(errors.CodeDatabase, "Delete", "delete from FTS failed", err)
 	}
 
 	return tx.Commit()
@@ -49,20 +45,18 @@ func (s *Store) DeleteByPath(ctx context.Context, path string) error {
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
+		return errors.WrapOp(errors.CodeDatabase, "DeleteByPath", "begin transaction failed", err)
 	}
 	defer tx.Rollback()
 
-	// Delete from memories table
 	_, err = tx.StmtContext(ctx, s.stmtDeleteByPath).ExecContext(ctx, path)
 	if err != nil {
-		return fmt.Errorf("delete memories: %w", err)
+		return errors.WrapOp(errors.CodeDatabase, "DeleteByPath", "delete memories failed", err)
 	}
 
-	// Delete from FTS index
 	_, err = tx.ExecContext(ctx, "DELETE FROM memories_fts WHERE path = ?", path)
 	if err != nil {
-		return fmt.Errorf("delete from FTS: %w", err)
+		return errors.WrapOp(errors.CodeDatabase, "DeleteByPath", "delete from FTS failed", err)
 	}
 
 	return tx.Commit()

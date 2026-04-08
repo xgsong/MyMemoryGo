@@ -2,11 +2,11 @@ package sqlite
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/xgsong/MyMemoryGo/internal/domain/entity"
 	"github.com/xgsong/MyMemoryGo/internal/domain/repository"
+	"github.com/xgsong/MyMemoryGo/internal/pkg/errors"
 	"github.com/xgsong/MyMemoryGo/internal/pkg/vector"
 )
 
@@ -51,7 +51,7 @@ func (s *Store) Search(ctx context.Context, query string, opts *repository.Searc
 	fulltextRes := <-fulltextCh
 
 	if vectorRes.err != nil {
-		return nil, fmt.Errorf("vector search: %w", vectorRes.err)
+		return nil, errors.WrapOp(errors.CodeDatabase, "Search", "vector search failed", vectorRes.err)
 	}
 
 	if fulltextRes.err != nil {
@@ -94,7 +94,7 @@ func (s *Store) SearchVector(ctx context.Context, embedding []float32, opts *rep
 
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("query memories: %w", err)
+		return nil, errors.WrapOp(errors.CodeDatabase, "SearchVector", "query memories failed", err)
 	}
 	defer rows.Close()
 
@@ -108,7 +108,7 @@ func (s *Store) SearchVector(ctx context.Context, embedding []float32, opts *rep
 
 		err := rows.Scan(&id, &path, &startLine, &endLine, &content, &embeddingBlob, &source, &createdAt)
 		if err != nil {
-			return nil, fmt.Errorf("scan row: %w", err)
+			return nil, errors.WrapOp(errors.CodeDatabase, "SearchVector", "scan row failed", err)
 		}
 
 		memEmbedding, err := deserializeEmbedding(embeddingBlob)

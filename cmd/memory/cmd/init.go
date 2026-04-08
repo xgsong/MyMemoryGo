@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/xgsong/MyMemoryGo/internal/pkg/errors"
 )
 
 // initCmd represents the init command.
@@ -54,7 +55,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+			return errors.WrapOp(errors.CodeFilesystem, "runInit", "failed to create directory", err)
 		}
 		if verbose {
 			fmt.Printf("  Created: %s\n", dir)
@@ -88,14 +89,13 @@ Organize your memories using markdown headings:
 - Reference materials
 `
 		if err := os.WriteFile(memoryFile, []byte(content), 0644); err != nil {
-			return fmt.Errorf("failed to create MEMORY.md: %w", err)
+			return errors.WrapOp(errors.CodeFilesystem, "runInit", "failed to create MEMORY.md", err)
 		}
 		if verbose {
 			fmt.Printf("  Created: %s\n", memoryFile)
 		}
 	}
 
-	// Create default config file if it doesn't exist
 	configFile := filepath.Join(workspaceDir, "..", "config.yaml")
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
 		configContent := `# Memory Configuration
@@ -130,7 +130,7 @@ logging:
   format: json
 `
 		if err := os.WriteFile(configFile, []byte(configContent), 0644); err != nil {
-			return fmt.Errorf("failed to create config.yaml: %w", err)
+			return errors.WrapOp(errors.CodeFilesystem, "runInit", "failed to create config.yaml", err)
 		}
 		if verbose {
 			fmt.Printf("  Created: %s\n", configFile)

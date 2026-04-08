@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/xgsong/MyMemoryGo/internal/pkg/errors"
 )
 
 // embeddingRequest represents an OpenAI embedding API request.
@@ -55,7 +57,7 @@ func (c *embedClient) embedBatchWithRetry(ctx context.Context, texts []string) (
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return nil, errors.WrapOp(errors.CodeCancelled, "embedBatchWithRetry", "context cancelled", ctx.Err())
 			case <-time.After(c.config.RetryDelay):
 			}
 		}
@@ -67,18 +69,16 @@ func (c *embedClient) embedBatchWithRetry(ctx context.Context, texts []string) (
 
 		lastErr = err
 
-		// Don't retry on certain errors
 		if isNonRetryableError(err) {
 			break
 		}
 	}
 
-	return nil, fmt.Errorf("after %d retries: %w", c.config.MaxRetries, lastErr)
+	return nil, errors.WrapOp(errors.CodeNetwork, "embedBatchWithRetry", "max retries exceeded", lastErr)
 }
 
 // callEmbeddingAPI makes the HTTP request to the embedding API.
 func (c *embedClient) callEmbeddingAPI(ctx context.Context, texts []string) ([][]float32, error) {
-	// Build request
 	req := embeddingRequest{
 		Model: c.config.Model,
 		Input: texts,
@@ -87,56 +87,47 @@ func (c *embedClient) callEmbeddingAPI(ctx context.Context, texts []string) ([][
 		req.Dimensions = c.config.Dimensions
 	}
 
-	// Serialize request
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
+		return nil, errors.WrapOp(errors.CodeNetwork, "callEmbeddingAPI", "marshal request failed", err)
 	}
 
-	// Build URL
 	url := c.config.BaseURL
 	if url[len(url)-1] != '/' {
 		url += "/"
 	}
 	url += "embeddings"
 
-	// Create HTTP request
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+		return nil, errors.WrapOp(errors.CodeNetwork, "callEmbeddingAPI", "create request failed", err)
 	}
 
-	// Set headers
 	httpReq.Header.Set("Content-Type", "application/json")
 	if c.config.APIKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+c.config.APIKey)
 	}
 
-	// Send request
 	httpResp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("http request: %w", err)
+		return nil, errors.WrapOp(errors.CodeNetwork, "callEmbeddingAPI", "http request failed", err)
 	}
 	defer httpResp.Body.Close()
 
-	// Read response
 	respBody, err := io.ReadAll(httpResp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
+		return nil, errors.WrapOp(errors.CodeNetwork, "callEmbeddingAPI", "read response failed", err)
 	}
 
-	// Check status code
 	if httpResp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("api error (status %d): %s", httpResp.StatusCode, respBody)
+		return nil, errors.WrapOp(errors.CodeNetwork, "callEmbeddingAPI", "api error", fmt.Errorf("status %d: %s", httpResp.StatusCode, respBody))
 	}
 
-	// Parse response
 	var resp embeddingResponse
 	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return nil, fmt.Errorf("unmarshal response: %w", err)
+		return nil, errors.WrapOp(errors.CodeNetwork, "callEmbeddingAPI", "unmarshal response failed", err)
 	}
 
-	// Extract embeddings
 	result := make([][]float32, len(resp.Data))
 	for i, d := range resp.Data {
 		result[i] = d.Embedding

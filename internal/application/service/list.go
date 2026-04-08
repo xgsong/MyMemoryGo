@@ -2,10 +2,10 @@ package service
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/xgsong/MyMemoryGo/internal/domain/entity"
 	"github.com/xgsong/MyMemoryGo/internal/domain/repository"
+	"github.com/xgsong/MyMemoryGo/internal/pkg/errors"
 )
 
 // ListMemoriesRequest contains parameters for listing memories.
@@ -40,7 +40,7 @@ func (s *MemoryApplicationService) ListMemories(ctx context.Context, req *ListMe
 
 	memories, total, err := s.memoryRepo.List(ctx, opts)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list memories: %w", err)
+		return nil, errors.WrapOp(errors.CodeDatabase, "ListMemories", "failed to list memories", err)
 	}
 
 	return &ListMemoriesResponse{
@@ -56,7 +56,7 @@ func (s *MemoryApplicationService) GetMemory(ctx context.Context, id string) (*e
 
 	memory, err := s.memoryRepo.Get(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get memory: %w", err)
+		return nil, errors.WrapOp(errors.CodeDatabase, "GetMemory", "failed to get memory", err)
 	}
 
 	return memory, nil
@@ -68,7 +68,7 @@ func (s *MemoryApplicationService) DeleteMemory(ctx context.Context, id string) 
 	defer s.writeMutex.Unlock()
 
 	if err := s.memoryRepo.Delete(ctx, id); err != nil {
-		return fmt.Errorf("failed to delete memory: %w", err)
+		return errors.WrapOp(errors.CodeDatabase, "DeleteMemory", "failed to delete memory", err)
 	}
 
 	return nil

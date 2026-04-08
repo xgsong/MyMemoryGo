@@ -7,6 +7,7 @@ import (
 
 	"github.com/xgsong/MyMemoryGo/internal/domain/entity"
 	domainService "github.com/xgsong/MyMemoryGo/internal/domain/service"
+	"github.com/xgsong/MyMemoryGo/internal/pkg/errors"
 	"github.com/xgsong/MyMemoryGo/internal/pkg/log"
 )
 
@@ -30,9 +31,8 @@ func (s *MemoryApplicationService) StoreMemory(ctx context.Context, req *StoreMe
 
 	logger.InfoContext(ctx, "storing memory", "content_length", len(req.Content), "path", req.Path)
 
-	// Validate request
 	if req.Content == "" {
-		return nil, fmt.Errorf("content cannot be empty")
+		return nil, errors.New(errors.CodeInvalidInput, "content cannot be empty")
 	}
 
 	// Determine path if not specified
@@ -82,28 +82,24 @@ func (s *MemoryApplicationService) StoreMemory(ctx context.Context, req *StoreMe
 		Metadata:  req.Metadata,
 	}
 
-	// Validate memory
 	if err := domainService.ValidateMemory(memory); err != nil {
 		logger.WarnContext(ctx, "memory validation failed", "error", err)
-		return nil, fmt.Errorf("validation failed: %w", err)
+		return nil, errors.WrapOp(errors.CodeValidation, "StoreMemory", "memory validation failed", err)
 	}
 
-	// Generate embedding
 	embedding, err := s.embeddingRepo.Embed(ctx, memory.Content)
 	if err != nil {
 		logger.ErrorContext(ctx, "failed to generate embedding", "error", err)
-		return nil, fmt.Errorf("failed to generate embedding: %w", err)
+		return nil, errors.WrapOp(errors.CodeNetwork, "StoreMemory", "failed to generate embedding", err)
 	}
 	memory.Embedding = embedding
 
-	// Store with write lock (SQLite concurrent write protection)
 	s.writeMutex.Lock()
 	defer s.writeMutex.Unlock()
 
-	// Store to repository (file + index)
 	if err := s.memoryRepo.Store(ctx, memory); err != nil {
 		logger.ErrorContext(ctx, "failed to store memory", "error", err, "memory_id", memory.ID)
-		return nil, fmt.Errorf("failed to store memory: %w", err)
+		return nil, errors.WrapOp(errors.CodeDatabase, "StoreMemory", "failed to store memory", err)
 	}
 
 	logger.InfoContext(ctx, "memory stored successfully", "memory_id", memory.ID, "path", memory.Path)

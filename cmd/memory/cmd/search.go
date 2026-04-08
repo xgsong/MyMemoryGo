@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/xgsong/MyMemoryGo/internal/application/service"
 	"github.com/xgsong/MyMemoryGo/internal/domain/entity"
+	"github.com/xgsong/MyMemoryGo/internal/pkg/errors"
 )
 
 // searchCmd represents the search command.
@@ -43,14 +44,12 @@ func init() {
 func runSearch(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
-	// Initialize app
 	app, err := InitializeApp(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to initialize: %w", err)
+		return errors.WrapOp(errors.CodeInternal, "runSearch", "failed to initialize", err)
 	}
 	defer app.Cleanup()
 
-	// Get query from args
 	query := args[0]
 	if len(args) > 1 {
 		for _, arg := range args[1:] {
@@ -58,14 +57,12 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Prepare search request
 	req := &service.SearchMemoriesRequest{
 		Query:    query,
 		Limit:    searchLimit,
 		MinScore: searchMinScore,
 	}
 
-	// Add source filter if specified
 	if searchSource != "" {
 		var source entity.SourceType
 		switch searchSource {
@@ -76,15 +73,14 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		case "session":
 			source = entity.SourceSession
 		default:
-			return fmt.Errorf("invalid source type: %s", searchSource)
+			return errors.New(errors.CodeInvalidInput, fmt.Sprintf("invalid source type: %s", searchSource))
 		}
 		req.SourceFilter = []entity.SourceType{source}
 	}
 
-	// Perform search
 	resp, err := app.MemoryApp.SearchMemories(ctx, req)
 	if err != nil {
-		return fmt.Errorf("failed to search memories: %w", err)
+		return errors.WrapOp(errors.CodeInternal, "runSearch", "failed to search memories", err)
 	}
 
 	// Output results

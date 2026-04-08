@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/xgsong/MyMemoryGo/internal/interface/api"
+	"github.com/xgsong/MyMemoryGo/internal/pkg/errors"
 )
 
 // serveCmd represents the serve command.
@@ -43,14 +44,12 @@ func init() {
 func runServe(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
-	// Initialize app
 	app, err := InitializeApp(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to initialize: %w", err)
+		return errors.WrapOp(errors.CodeInternal, "runServe", "failed to initialize", err)
 	}
 	defer app.Cleanup()
 
-	// Get server configuration
 	host := serveHost
 	if host == "" {
 		host = viper.GetString("api.host")
@@ -69,9 +68,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	addr := fmt.Sprintf("%s:%d", host, port)
 
-	// Create API server
 	server := api.NewServer(app.MemoryApp)
-
 	fmt.Printf("Starting REST API server on %s\n", addr)
 	fmt.Println()
 	fmt.Println("Endpoints:")
@@ -86,10 +83,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	fmt.Println("Press Ctrl+C to stop...")
 
-	// Wait for interrupt
 	ctx = WaitForInterrupt(ctx)
 
-	// Start server in a goroutine
 	errChan := make(chan error, 1)
 	go func() {
 		if err := server.Start(addr); err != nil {
@@ -97,7 +92,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	// Wait for interrupt or server error
 	select {
 	case <-ctx.Done():
 		fmt.Println("\nShutting down server...")
@@ -105,7 +99,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		server.Shutdown(shutdownCtx)
 		fmt.Println("Server stopped.")
 	case err := <-errChan:
-		return fmt.Errorf("server error: %w", err)
+		return errors.WrapOp(errors.CodeInternal, "runServe", "server error", err)
 	}
 
 	return nil

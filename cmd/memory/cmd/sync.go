@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"github.com/xgsong/MyMemoryGo/internal/pkg/errors"
 )
 
 // syncCmd represents the sync command.
@@ -31,22 +32,19 @@ func init() {
 func runSync(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
-	// Initialize app
 	app, err := InitializeApp(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to initialize: %w", err)
+		return errors.WrapOp(errors.CodeInternal, "runSync", "failed to initialize", err)
 	}
 	defer app.Cleanup()
 
-	fmt.Println("Synchronizing files with database...")
+	fmt.Println("Synchronizing files. with database...")
 	fmt.Println("This may take a while for large workspaces.")
 
-	// Perform sync
 	if err := app.MemoryApp.SyncIndex(ctx); err != nil {
-		return fmt.Errorf("failed to sync index: %w", err)
+		return errors.WrapOp(errors.CodeInternal, "runSync", "failed to sync index", err)
 	}
 
 	fmt.Println("✅ Synchronization completed successfully")
-
 	return nil
 }

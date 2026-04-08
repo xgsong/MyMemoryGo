@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/xgsong/MyMemoryGo/internal/domain/repository"
+	"github.com/xgsong/MyMemoryGo/internal/pkg/errors"
 )
 
 // watchCmd represents the watch command.
@@ -33,21 +34,16 @@ func init() {
 func runWatch(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
-	// Initialize app
 	app, err := InitializeApp(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to initialize: %w", err)
+		return errors.WrapOp(errors.CodeInternal, "runWatch", "failed to initialize", err)
 	}
 	defer app.Cleanup()
-
 	workspaceDir := viper.GetString("workspace.dir")
-
 	fmt.Printf("Watching workspace: %s\n", workspaceDir)
 	fmt.Println("Press Ctrl+C to stop...")
 
-	// Start file watcher
 	ctx = WaitForInterrupt(ctx)
-
 	handler := func(event repository.FileChangeEvent) {
 		fmt.Printf("File changed: %s (%s), syncing...\n", event.Path, event.Operation)
 		if err := app.MemoryApp.SyncIndex(ctx); err != nil {
@@ -56,10 +52,9 @@ func runWatch(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := app.FileMgr.Watch(ctx, workspaceDir, handler); err != nil {
-		return fmt.Errorf("failed to start watcher: %w", err)
+		return errors.WrapOp(errors.CodeFilesystem, "runWatch", "failed to start watcher", err)
 	}
 
 	fmt.Println("\nStopped watching.")
-
 	return nil
 }

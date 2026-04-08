@@ -3,9 +3,9 @@ package sqlite
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/xgsong/MyMemoryGo/internal/domain/entity"
+	"github.com/xgsong/MyMemoryGo/internal/pkg/errors"
 )
 
 // prepareMemoryForStorage serializes embedding and metadata for storage.
@@ -13,14 +13,14 @@ func prepareMemoryForStorage(memory *entity.Memory) (embeddingBlob, metadataJSON
 	if memory.Embedding != nil {
 		embeddingBlob, err = serializeEmbedding(memory.Embedding)
 		if err != nil {
-			return nil, nil, fmt.Errorf("serialize embedding for %s: %w", memory.ID, err)
+			return nil, nil, errors.WrapOp(errors.CodeDatabase, "prepareMemoryForStorage", "serialize embedding failed", err)
 		}
 	}
 
 	if memory.Metadata != nil {
 		metadataJSON, err = json.Marshal(memory.Metadata)
 		if err != nil {
-			return nil, nil, fmt.Errorf("serialize metadata for %s: %w", memory.ID, err)
+			return nil, nil, errors.WrapOp(errors.CodeDatabase, "prepareMemoryForStorage", "serialize metadata failed", err)
 		}
 	}
 
@@ -32,20 +32,17 @@ func (s *Store) Store(ctx context.Context, memory *entity.Memory) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Serialize memory for storage
 	embeddingBlob, metadataJSON, err := prepareMemoryForStorage(memory)
 	if err != nil {
 		return err
 	}
 
-	// Begin transaction
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
+		return errors.WrapOp(errors.CodeDatabase, "Store", "begin transaction failed", err)
 	}
 	defer tx.Rollback()
 
-	// Insert memory
 	_, err = tx.StmtContext(ctx, s.stmtStore).ExecContext(ctx,
 		memory.ID,
 		memory.Path,
@@ -60,10 +57,9 @@ func (s *Store) Store(ctx context.Context, memory *entity.Memory) error {
 		string(metadataJSON),
 	)
 	if err != nil {
-		return fmt.Errorf("insert memory: %w", err)
+		return errors.WrapOp(errors.CodeDatabase, "Store", "insert memory failed", err)
 	}
 
-	// Update FTS index
 	_, err = tx.ExecContext(ctx,
 		"INSERT OR REPLACE INTO memories_fts(id, path, content, source) VALUES (?, ?, ?, ?)",
 		memory.ID,
@@ -72,7 +68,7 @@ func (s *Store) Store(ctx context.Context, memory *entity.Memory) error {
 		string(memory.Source),
 	)
 	if err != nil {
-		return fmt.Errorf("update FTS index: %w", err)
+		return errors.WrapOp(errors.CodeDatabase, "Store", "update FTS index failed", err)
 	}
 
 	return tx.Commit()
@@ -85,18 +81,16 @@ func (s *Store) StoreBatch(ctx context.Context, memories []*entity.Memory) error
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
+		return errors.WrapOp(errors.CodeDatabase, "StoreBatch", "begin transaction failed", err)
 	}
 	defer tx.Rollback()
 
 	for _, memory := range memories {
-		// Serialize memory for storage
 		embeddingBlob, metadataJSON, err := prepareMemoryForStorage(memory)
 		if err != nil {
 			return err
 		}
 
-		// Insert memory
 		_, err = tx.ExecContext(ctx,
 			`INSERT OR REPLACE INTO memories
 			(id, path, start_line, end_line, content, embedding, source, created_at, updated_at, checksum, metadata)
@@ -114,10 +108,9 @@ func (s *Store) StoreBatch(ctx context.Context, memories []*entity.Memory) error
 			string(metadataJSON),
 		)
 		if err != nil {
-			return fmt.Errorf("insert memory %s: %w", memory.ID, err)
+			return errors.WrapOp(errors.CodeDatabase, "StoreBatch", "insert memory failed", err)
 		}
 
-		// Update FTS index
 		_, err = tx.ExecContext(ctx,
 			"INSERT OR REPLACE INTO memories_fts(id, path, content, source) VALUES (?, ?, ?, ?)",
 			memory.ID,
@@ -126,7 +119,7 @@ func (s *Store) StoreBatch(ctx context.Context, memories []*entity.Memory) error
 			string(memory.Source),
 		)
 		if err != nil {
-			return fmt.Errorf("update FTS index: %w", err)
+			return errors.WrapOp(errors.CodeDatabase, "StoreBatch", "update FTS index failed", err)
 		}
 	}
 
