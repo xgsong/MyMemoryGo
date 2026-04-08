@@ -133,12 +133,12 @@
 
 #### 性能
 
-| # | 文件 | 问题 |
-|---|------|------|
-| 1 | `search_core.go:88-93` | 向量搜索全表扫描, 无 LIMIT, 加载所有行到内存计算余弦相似度 |
-| 2 | `mmr.go:43-64` | MMR 重排序 O(n^3) 复杂度, 大结果集下极慢 |
-| 3 | `mmr.go:67` | Slice 切片操作导致 O(n^2) 内存拷贝 |
-| 4 | `vector.go` | 无 SIMD 或批量优化, 768 维 embedding 热路径可优化 |
+| # | 文件 | 问题 | 状态 |
+|---|------|------|------|
+| 1 | `search_core.go` | 向量搜索全表扫描, 无 LIMIT, 加载所有行到内存计算余弦相似度 | **已修复** |
+| 2 | `mmr.go:43-64` | MMR 重排序 O(n^3) 复杂度, 大结果集下极慢 | |
+| 3 | `mmr.go:67` | Slice 切片操作导致 O(n^2) 内存拷贝 | |
+| 4 | `vector.go` | 无 SIMD 或批量优化, 768 维 embedding 热路径可优化 | **部分修复** |
 
 #### 安全
 
@@ -205,12 +205,18 @@
 
 > **已修复**: MinScore/VectorWeight/FulltextWeight/MMRLambda 均改为 `*float64` 指针类型, nil 表示未设置使用默认值。
 
-### 5. 向量搜索性能 (待优化)
+### 5. ~~向量搜索性能~~ (已优化)
 
-当前向量搜索全表扫描 (SELECT ... WHERE embedding IS NOT NULL), 随数据增长性能会严重退化。建议:
-- 添加 LIMIT 预过滤
-- 考虑引入 HNSW/IVF 索引 (如 sqlite-vec 扩展)
-- 或在应用层缓存 embedding 矩阵, 避免每次查询都从 DB 读取
+~~当前向量搜索全表扫描 (SELECT ... WHERE embedding IS NOT NULL), 随数据增长性能会严重退化。建议:~~
+~~- 添加 LIMIT 预过滤~~
+~~- 考虑引入 HNSW/IVF 索引 (如 sqlite-vec 扩展)~~
+~~- 或在应用层缓存 embedding 矩阵, 避免每次查询都从 DB 读取~~
+
+> **已优化** (第三轮): 实施四项向量搜索性能优化:
+> 1. **HNSW 向量索引** — 引入 `github.com/coder/hnsw` 纯 Go HNSW 库, 启动时从 SQLite 加载构建内存索引, O(log n) 搜索替代 O(n) 全表扫描
+> 2. **预归一化 + 点积** — 存储时归一化 embedding, 搜索用点积替代余弦相似度 (1 趟 vs 3 趟), 自动迁移旧数据
+> 3. **Top-K 最小堆** — `SearchVector` 使用 TopKHeap 仅保留 top-K 候选, 避免全量收集+排序
+> 4. **激活 HybridEngine** — 接入 MMR 重排序 + 时间衰减, 搜索管道完整激活
 
 ---
 
@@ -286,5 +292,51 @@ go test -race ./... -count=1  # 全部通过, 无数据竞争
 | P2 | 25 | **25** | 0 |
 | 测试层 | 3 | **3** | 0 |
 | Go Vet | 3 | **3** | 0 |
-| P3 | 21 | 0 | 21 |
-| **合计** | **63** | **42** | **21** |
+| P3 | 21 | **3** | 18 |
+| **合计** | **63** | **45** | **18** |
+
+---
+
+## 七、第三轮优化 — 向量搜索性能 (2026-04-08)
+
+### 优化内容
+
+| # | 优化项 | 实现方式 | 影响 |
+|---|--------|----------|------|
+| 1 | HNSW 向量索引 | `github.com/coder/hnsw v0.6.1` 纯 Go HNSW, 启动时加载, 写入/删除时同步更新 | O(log n) 替代 O(n) 全表扫描 |
+| 2 | 预归一化 + 点积 | 存储前 `vector.Normalize()`, 搜索用 `DotProduct` 替代 `CosineSimilarity` | 1 趟遍历替代 3 趟, ~2x 加速 |
+| 3 | Top-K 最小堆 | `TopKHeap` (container/heap) 替代全量收集+排序 | 减少内存分配和排序开销 |
+| 4 | 激活 HybridEngine | app.go 接入 HybridEngine + MMR + 时间衰减 | 搜索质量提升 (多样性+时效性) |
+
+### 关键设计决策
+
+- **HNSW 库选择**: 使用 `coder/hnsw` (纯 Go, 无 CGO), 与项目 `modernc.org/sqlite` 兼容。`sqlite-vec` 因需 CGO 不可用。
+- **向量索引持久化**: HNSW 索引为内存结构, SQLite BLOB 仍为数据源。启动时从 SQLite 加载构建, 写入/删除时同步更新。`coder/hnsw` 支持 Export/Import 可做持久化, 当前方案重启时重建即可。
+- **数据迁移**: 新增 `__schema_version` 元数据行追踪 schema 版本。版本 < 2 时自动执行 embedding 归一化迁移。
+- **降级策略**: 若 HNSW 索引不可用 (加载失败/空库), 自动降级为 TopK 优化的暴力扫描。
+- **HybridEngine 接口**: 补充 `Index`/`RemoveFromIndex` 方法, 委托给底层 Store。
+- **MMR embedding 填充**: `Rerank()` 自动从 SearchHit.Embedding 填充内部缓存, 无需外部手动调用 `SetEmbedding`。
+
+### 新增文件
+
+| 文件 | 用途 |
+|------|------|
+| `internal/pkg/vector/topk.go` | Top-K 最小堆实现 (基于 container/heap) |
+| `internal/pkg/vector/topk_test.go` | Top-K 堆测试 (13 个用例 + 3 个 benchmark) |
+| `internal/infrastructure/search/vector_index.go` | HNSW 向量索引封装 (Build/Add/Remove/Search) |
+| `internal/infrastructure/search/vector_index_test.go` | 向量索引测试 (14 个用例 + 3 个 benchmark) |
+
+### 修改文件
+
+| 文件 | 变更 |
+|------|------|
+| `internal/infrastructure/persistence/sqlite/store.go` | 添加 VectorIndex 字段, loadVectorIndex(), SchemaVersion(), migrateNormalizedEmbeddings(), runMigrations() |
+| `internal/infrastructure/persistence/sqlite/db_setup.go` | schema 版本标记 (`__schema_version`) |
+| `internal/infrastructure/persistence/sqlite/write_ops.go` | 存储前归一化 embedding, 提交后更新 HNSW 索引 |
+| `internal/infrastructure/persistence/sqlite/delete_ops.go` | 删除后更新 HNSW 索引 (DeleteByPath 先查询 ID) |
+| `internal/infrastructure/persistence/sqlite/search_core.go` | 点积替代余弦, TopK 堆, HNSW 搜索路径 + 暴力降级 |
+| `internal/infrastructure/search/mmr.go` | 点积替代余弦, Rerank 自动填充 embedding |
+| `internal/infrastructure/search/hybrid.go` | 添加 Index/RemoveFromIndex 方法实现 SearchRepository 接口 |
+| `cmd/memory/cmd/app.go` | 接入 HybridEngine + MMR + Decay 替代直接传 Store |
+| `internal/application/service/search.go` | 添加 embedding 生成注释说明 |
+| `go.mod` / `go.sum` | 新增 `github.com/coder/hnsw v0.6.1` 及传递依赖 |

@@ -6,12 +6,15 @@ import (
 
 	"github.com/xgsong/MyMemoryGo/internal/domain/entity"
 	"github.com/xgsong/MyMemoryGo/internal/pkg/errors"
+	"github.com/xgsong/MyMemoryGo/internal/pkg/vector"
 )
 
 // prepareMemoryForStorage serializes embedding and metadata for storage.
 func prepareMemoryForStorage(memory *entity.Memory) (embeddingBlob, metadataJSON []byte, err error) {
 	if memory.Embedding != nil {
-		embeddingBlob, err = serializeEmbedding(memory.Embedding)
+		// Normalize embedding before storage for faster dot-product search
+		normalized := vector.Normalize(memory.Embedding)
+		embeddingBlob, err = serializeEmbedding(normalized)
 		if err != nil {
 			return nil, nil, errors.WrapOp(errors.CodeDatabase, "prepareMemoryForStorage", "serialize embedding failed", err)
 		}
@@ -71,7 +74,16 @@ func (s *Store) Store(ctx context.Context, memory *entity.Memory) error {
 		return errors.WrapOp(errors.CodeDatabase, "Store", "update FTS index failed", err)
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return errors.WrapOp(errors.CodeDatabase, "Store", "commit failed", err)
+	}
+
+	// Update HNSW vector index after successful commit
+	if s.vectorIdx != nil && memory.Embedding != nil {
+		s.vectorIdx.Add(memory.ID, memory.Embedding)
+	}
+
+	return nil
 }
 
 // StoreBatch saves multiple memory entries in a single transaction.
@@ -123,5 +135,16 @@ func (s *Store) StoreBatch(ctx context.Context, memories []*entity.Memory) error
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return errors.WrapOp(errors.CodeDatabase, "StoreBatch", "commit failed", err)
+	}
+
+	// Update HNSW vector index after successful commit
+	for _, memory := range memories {
+		if s.vectorIdx != nil && memory.Embedding != nil {
+			s.vectorIdx.Add(memory.ID, memory.Embedding)
+		}
+	}
+
+	return nil
 }

@@ -86,6 +86,8 @@ func (s *MemoryApplicationService) SearchMemories(ctx context.Context, req *Sear
 	}
 
 	// Generate query embedding for vector search
+	// Note: HybridEngine also generates embeddings internally. We generate here
+	// as a fallback for search repos that don't handle embedding (e.g., sqlite.Store).
 	queryEmbedding, embedErr := s.embeddingRepo.Embed(ctx, req.Query)
 	if embedErr != nil {
 		logger.WarnContext(ctx, "failed to generate query embedding, vector search will be degraded", "error", embedErr)

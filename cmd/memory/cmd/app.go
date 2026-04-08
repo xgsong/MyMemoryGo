@@ -16,6 +16,7 @@ import (
 	"github.com/xgsong/MyMemoryGo/internal/infrastructure/embedding"
 	"github.com/xgsong/MyMemoryGo/internal/infrastructure/persistence/filestore"
 	"github.com/xgsong/MyMemoryGo/internal/infrastructure/persistence/sqlite"
+	"github.com/xgsong/MyMemoryGo/internal/infrastructure/search"
 )
 
 // AppContext holds the initialized application components.
@@ -130,12 +131,55 @@ func InitializeApp(ctx context.Context) (*AppContext, error) {
 		return nil, fmt.Errorf("failed to initialize file manager: %w", err)
 	}
 
-	// Initialize application service
+	// Initialize HybridEngine with MMR + temporal decay
+	hybridEngine := search.NewHybridEngine(
+		&search.HybridSearchConfig{
+			VectorWeight:   viper.GetFloat64("search.vector_weight"),
+			FulltextWeight: viper.GetFloat64("search.fulltext_weight"),
+			DefaultLimit:   viper.GetInt("search.default_limit"),
+			MinScore:       viper.GetFloat64("search.min_score"),
+		},
+		store,          // vectorRepo
+		store,          // fulltextRepo
+		cachedProvider, // embedder
+	)
+
+	// Configure MMR reranker for search result diversity
+	mmrEnabled := viper.GetBool("search.mmr.enabled")
+	if mmrEnabled {
+		mmrReranker := search.NewMMRReranker()
+		hybridEngine.SetReranker(mmrReranker)
+		slog.Info("MMR reranker enabled",
+			"lambda", viper.GetFloat64("search.mmr.lambda"),
+		)
+	}
+
+	// Configure temporal decay for recent memory prioritization
+	decayEnabled := viper.GetBool("search.decay.enabled")
+	if decayEnabled {
+		halfLife := viper.GetDuration("search.decay.half_life")
+		if halfLife == 0 {
+			halfLife = 720 * time.Hour // default 30-day half-life
+		}
+		decayCalc := search.NewTemporalDecayCalculator(halfLife)
+		hybridEngine.SetDecayCalculator(decayCalc)
+		slog.Info("Temporal decay enabled",
+			"half_life", halfLife.String(),
+		)
+	}
+
+	// Initialize application service with HybridEngine as SearchRepository
 	memoryApp := service.NewMemoryApplicationService(
 		store,
-		store,
+		hybridEngine,
 		cachedProvider,
 		fileMgr,
+	)
+
+	slog.Info("Initialized search engine",
+		"vector_index_size", store.VectorIndex().Size(),
+		"mmr_enabled", mmrEnabled,
+		"decay_enabled", decayEnabled,
 	)
 
 	return &AppContext{

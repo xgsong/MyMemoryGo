@@ -111,6 +111,13 @@ func (r *MMRReranker) Rerank(hits []*entity.SearchHit, lambda float64) []*entity
 		lambda = 0.01
 	}
 
+	// Pre-populate embeddings from hits for MMR diversity computation
+	for _, hit := range hits {
+		if hit.Embedding != nil {
+			r.SetEmbedding(hit.ID, hit.Embedding)
+		}
+	}
+
 	selected := make([]*entity.SearchHit, 0, len(hits))
 	remaining := make([]*entity.SearchHit, len(hits))
 	copy(remaining, hits)
@@ -160,7 +167,8 @@ func (r *MMRReranker) cosineSimilarity(id1, id2 string) float64 {
 	entry2, ok2 := emb2Val.(*embeddingEntry)
 
 	if ok1 && ok2 {
-		return vector.CosineSimilarity(entry1.embedding, entry2.embedding)
+		// Embeddings are pre-normalized, so dot product equals cosine similarity
+		return vector.DotProduct(entry1.embedding, entry2.embedding)
 	}
 
 	emb1, ok1 := emb1Val.([]float32)
@@ -170,5 +178,5 @@ func (r *MMRReranker) cosineSimilarity(id1, id2 string) float64 {
 		return 0.0
 	}
 
-	return vector.CosineSimilarity(emb1, emb2)
+	return vector.DotProduct(emb1, emb2)
 }

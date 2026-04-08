@@ -2,6 +2,8 @@ package sqlite
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/xgsong/MyMemoryGo/internal/domain/entity"
@@ -19,9 +21,6 @@ func (s *Store) Search(ctx context.Context, query string, opts *repository.Searc
 	if opts.Limit == 0 {
 		opts.Limit = 10
 	}
-	// MinScore already has default from DefaultSearchOptions if not set
-	// VectorWeight already has default from DefaultSearchOptions if not set
-	// FulltextWeight already has default from DefaultSearchOptions if not set
 
 	type searchResult struct {
 		hits []*entity.SearchHit
@@ -79,6 +78,124 @@ func (s *Store) SearchVector(ctx context.Context, embedding []float32, opts *rep
 		opts.Limit = 10
 	}
 
+	// Normalize query embedding once for dot-product search
+	// (stored embeddings are pre-normalized, so dot product = cosine similarity)
+	var queryNorm []float32
+	if embedding != nil && len(embedding) > 0 {
+		queryNorm = vector.Normalize(embedding)
+	}
+
+	// Try HNSW index search first (O(log n) vs O(n) brute force)
+	if s.vectorIdx != nil && s.vectorIdx.IsLoaded() && s.vectorIdx.Size() > 0 && queryNorm != nil {
+		hits, err := s.searchVectorHNSW(ctx, queryNorm, opts)
+		if err == nil && len(hits) > 0 {
+			return hits, nil
+		}
+		// Fall through to brute force on HNSW error
+	}
+
+	// Brute force fallback: full table scan with TopK heap
+	return s.searchVectorBruteForce(ctx, queryNorm, opts)
+}
+
+// searchVectorHNSW uses the HNSW index for fast approximate nearest neighbor search.
+func (s *Store) searchVectorHNSW(ctx context.Context, queryNorm []float32, opts *repository.SearchOptions) ([]*entity.SearchHit, error) {
+	searchLimit := opts.Limit * 2
+
+	// Get candidate IDs from HNSW index
+	candidateIDs := s.vectorIdx.Search(queryNorm, searchLimit)
+	if len(candidateIDs) == 0 {
+		return nil, nil
+	}
+
+	// Fetch full memory data for candidates from SQLite
+	placeholders := make([]string, len(candidateIDs))
+	args := make([]interface{}, len(candidateIDs))
+	for i, id := range candidateIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id, path, start_line, end_line, content, embedding, source, created_at
+		FROM memories
+		WHERE id IN (%s)
+	`, strings.Join(placeholders, ","))
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, errors.WrapOp(errors.CodeDatabase, "searchVectorHNSW", "query candidates failed", err)
+	}
+	defer rows.Close()
+
+	// Build a map of candidate data
+	type candidateData struct {
+		id        string
+		path      string
+		startLine int
+		endLine   int
+		content   string
+		source    string
+		createdAt int64
+		embedding []float32
+	}
+	candidateMap := make(map[string]*candidateData, len(candidateIDs))
+	for rows.Next() {
+		var id, path, content, source string
+		var startLine, endLine int
+		var embeddingBlob []byte
+		var createdAt int64
+
+		if err := rows.Scan(&id, &path, &startLine, &endLine, &content, &embeddingBlob, &source, &createdAt); err != nil {
+			continue
+		}
+
+		memEmbedding, err := deserializeEmbedding(embeddingBlob)
+		if err != nil {
+			continue
+		}
+
+		candidateMap[id] = &candidateData{
+			id: id, path: path, startLine: startLine, endLine: endLine,
+			content: content, source: source, createdAt: createdAt,
+			embedding: memEmbedding,
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.WrapOp(errors.CodeDatabase, "searchVectorHNSW", "iterate rows failed", err)
+	}
+
+	// Compute dot-product scores and build results
+	var hits []*entity.SearchHit
+	for _, id := range candidateIDs {
+		c, ok := candidateMap[id]
+		if !ok {
+			continue
+		}
+
+		score := vector.DotProduct(queryNorm, c.embedding)
+		snippet := truncateContent(c.content, 200)
+
+		hits = append(hits, &entity.SearchHit{
+			Entry: &entity.Entry{
+				ID:        c.id,
+				Path:      c.path,
+				StartLine: c.startLine,
+				EndLine:   c.endLine,
+				Snippet:   snippet,
+				Score:     score,
+				Source:    entity.SourceType(c.source),
+				Timestamp: time.Unix(c.createdAt, 0),
+			},
+			Embedding: c.embedding,
+		})
+	}
+
+	return hits, nil
+}
+
+// searchVectorBruteForce performs a brute-force vector search using TopK heap.
+func (s *Store) searchVectorBruteForce(ctx context.Context, queryNorm []float32, opts *repository.SearchOptions) ([]*entity.SearchHit, error) {
 	query := `
 		SELECT id, path, start_line, end_line, content, embedding, source, created_at
 		FROM memories
@@ -92,7 +209,23 @@ func (s *Store) SearchVector(ctx context.Context, embedding []float32, opts *rep
 	}
 	defer rows.Close()
 
-	var hits []*entity.SearchHit
+	// Use TopK heap to avoid collecting and sorting all results
+	searchLimit := opts.Limit * 2
+	topK := vector.NewTopKHeap(searchLimit)
+
+	// Store row data for top-K candidates
+	type rowData struct {
+		id        string
+		path      string
+		startLine int
+		endLine   int
+		content   string
+		source    string
+		createdAt int64
+		embedding []float32
+		score     float64
+	}
+	var candidates []rowData
 
 	for rows.Next() {
 		var id, path, content, source string
@@ -111,30 +244,54 @@ func (s *Store) SearchVector(ctx context.Context, embedding []float32, opts *rep
 		}
 
 		var score float64
-		if embedding != nil && len(embedding) > 0 {
-			score = vector.CosineSimilarity(embedding, memEmbedding)
+		if queryNorm != nil {
+			score = vector.DotProduct(queryNorm, memEmbedding)
 		} else {
 			score = 0.5
 		}
 
-		snippet := truncateContent(content, 200)
-
-		hits = append(hits, &entity.SearchHit{
-			Entry: &entity.Entry{
-				ID:        id,
-				Path:      path,
-				StartLine: startLine,
-				EndLine:   endLine,
-				Snippet:   snippet,
-				Score:     score,
-				Source:    entity.SourceType(source),
-				Timestamp: time.Unix(createdAt, 0),
-			},
-			Embedding: memEmbedding,
-		})
+		// Only keep candidate if it qualifies for top-K
+		if !topK.Full() || score > topK.MinScore() {
+			topK.Add(id, score)
+			candidates = append(candidates, rowData{
+				id: id, path: path, startLine: startLine, endLine: endLine,
+				content: content, source: source, createdAt: createdAt,
+				embedding: memEmbedding, score: score,
+			})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.WrapOp(errors.CodeDatabase, "SearchVector", "iterate rows failed", err)
 	}
 
-	return hits, rows.Err()
+	// Build result from top-K items
+	topItems := topK.Items()
+	itemMap := make(map[string]rowData, len(candidates))
+	for _, c := range candidates {
+		itemMap[c.id] = c
+	}
+
+	var hits []*entity.SearchHit
+	for _, item := range topItems {
+		if c, ok := itemMap[item.ID]; ok {
+			snippet := truncateContent(c.content, 200)
+			hits = append(hits, &entity.SearchHit{
+				Entry: &entity.Entry{
+					ID:        c.id,
+					Path:      c.path,
+					StartLine: c.startLine,
+					EndLine:   c.endLine,
+					Snippet:   snippet,
+					Score:     item.Score,
+					Source:    entity.SourceType(c.source),
+					Timestamp: time.Unix(c.createdAt, 0),
+				},
+				Embedding: c.embedding,
+			})
+		}
+	}
+
+	return hits, nil
 }
 
 func (s *Store) SearchFulltext(ctx context.Context, query string, opts *repository.SearchOptions) ([]*entity.SearchHit, error) {

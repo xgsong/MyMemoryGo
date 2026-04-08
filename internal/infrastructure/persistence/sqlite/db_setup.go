@@ -57,6 +57,12 @@ func createSchema(db *sql.DB, vectorDims int) error {
 	CREATE INDEX IF NOT EXISTS idx_memories_source ON memories(source);
 	CREATE INDEX IF NOT EXISTS idx_memories_created_at ON memories(created_at);
 	CREATE INDEX IF NOT EXISTS idx_embedding_cache_provider ON embedding_cache(provider, model);
+
+	-- Schema version tracking for migrations
+	-- size field stores the schema version number
+	-- checksum field stores a description of the version
+	INSERT OR IGNORE INTO metadata (path, size, mtime, checksum, indexed_at)
+	VALUES ('__schema_version', 2, 0, 'normalized_embeddings', 0);
 	`
 
 	_, err := db.Exec(schema)

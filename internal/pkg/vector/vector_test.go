@@ -200,3 +200,67 @@ func TestNorm(t *testing.T) {
 		})
 	}
 }
+
+// --- Benchmarks for DotProduct vs CosineSimilarity at realistic dimensions ---
+
+func generateVector(dims int) []float32 {
+	vec := make([]float32, dims)
+	for i := range vec {
+		vec[i] = float32(float64(i)*0.01 + 0.1)
+	}
+	return Normalize(vec)
+}
+
+func BenchmarkCosineSimilarity_768dim(b *testing.B) {
+	a := generateVector(768)
+	vec := generateVector(768)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		CosineSimilarity(a, vec)
+	}
+}
+
+func BenchmarkDotProduct_768dim(b *testing.B) {
+	a := generateVector(768)
+	vec := generateVector(768)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		DotProduct(a, vec)
+	}
+}
+
+func BenchmarkCosineSimilarity_384dim(b *testing.B) {
+	a := generateVector(384)
+	vec := generateVector(384)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		CosineSimilarity(a, vec)
+	}
+}
+
+func BenchmarkDotProduct_384dim(b *testing.B) {
+	a := generateVector(384)
+	vec := generateVector(384)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		DotProduct(a, vec)
+	}
+}
+
+func BenchmarkCosineSimilarity_1536dim(b *testing.B) {
+	a := generateVector(1536)
+	vec := generateVector(1536)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		CosineSimilarity(a, vec)
+	}
+}
+
+func BenchmarkDotProduct_1536dim(b *testing.B) {
+	a := generateVector(1536)
+	vec := generateVector(1536)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		DotProduct(a, vec)
+	}
+}

@@ -2,11 +2,15 @@
 package sqlite
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
 	"sync"
 
+	"github.com/xgsong/MyMemoryGo/internal/infrastructure/search"
+	"github.com/xgsong/MyMemoryGo/internal/pkg/errors"
+	"github.com/xgsong/MyMemoryGo/internal/pkg/vector"
 	_ "modernc.org/sqlite" // Pure Go SQLite driver (no CGO required)
 )
 
@@ -34,9 +38,10 @@ func DefaultConfig() *Config {
 
 // Store implements repository interfaces using SQLite.
 type Store struct {
-	db     *sql.DB
-	config *Config
-	mu     sync.RWMutex
+	db         *sql.DB
+	config     *Config
+	mu         sync.RWMutex
+	vectorIdx  *search.VectorIndex
 
 	// Prepared statements for performance
 	stmtStore          *sql.Stmt
@@ -92,6 +97,18 @@ func New(config *Config) (*Store, error) {
 		return nil, wrapErr("prepare statements", err)
 	}
 
+	// Run migrations if needed
+	if err := store.runMigrations(context.Background()); err != nil {
+		db.Close()
+		return nil, wrapErr("run migrations", err)
+	}
+
+	// Initialize HNSW vector index from existing data
+	if err := store.loadVectorIndex(context.Background()); err != nil {
+		db.Close()
+		return nil, wrapErr("load vector index", err)
+	}
+
 	return store, nil
 }
 
@@ -115,6 +132,129 @@ func (s *Store) Close() error {
 	}
 
 	return s.db.Close()
+}
+
+// SchemaVersion returns the current schema version from the metadata table.
+func (s *Store) SchemaVersion() int {
+	var version int
+	err := s.db.QueryRow("SELECT size FROM metadata WHERE path = '__schema_version'").Scan(&version)
+	if err != nil {
+		return 0
+	}
+	return version
+}
+
+// runMigrations executes necessary database migrations based on the current schema version.
+func (s *Store) runMigrations(ctx context.Context) error {
+	version := s.SchemaVersion()
+	if version < 2 {
+		if err := s.migrateNormalizedEmbeddings(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// migrateNormalizedEmbeddings normalizes all existing embeddings in the database.
+func (s *Store) migrateNormalizedEmbeddings(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rows, err := s.db.QueryContext(ctx, "SELECT id, embedding FROM memories WHERE embedding IS NOT NULL")
+	if err != nil {
+		return errors.WrapOp(errors.CodeDatabase, "migrateNormalizedEmbeddings", "query embeddings failed", err)
+	}
+	defer rows.Close()
+
+	type idEmbedding struct {
+		id        string
+		embedding []byte
+	}
+	var toUpdate []idEmbedding
+
+	for rows.Next() {
+		var id string
+		var blob []byte
+		if err := rows.Scan(&id, &blob); err != nil {
+			continue
+		}
+
+		emb, err := deserializeEmbedding(blob)
+		if err != nil {
+			continue
+		}
+
+		normalized := vector.Normalize(emb)
+		normalizedBlob, err := serializeEmbedding(normalized)
+		if err != nil {
+			continue
+		}
+
+		toUpdate = append(toUpdate, idEmbedding{id: id, embedding: normalizedBlob})
+	}
+	if err := rows.Err(); err != nil {
+		return errors.WrapOp(errors.CodeDatabase, "migrateNormalizedEmbeddings", "iterate rows failed", err)
+	}
+
+	if len(toUpdate) == 0 {
+		return nil
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return errors.WrapOp(errors.CodeDatabase, "migrateNormalizedEmbeddings", "begin transaction failed", err)
+	}
+	defer tx.Rollback()
+
+	for _, item := range toUpdate {
+		_, err := tx.ExecContext(ctx, "UPDATE memories SET embedding = ? WHERE id = ?", item.embedding, item.id)
+		if err != nil {
+			return errors.WrapOp(errors.CodeDatabase, "migrateNormalizedEmbeddings", "update embedding failed", err)
+		}
+	}
+
+	_, err = tx.ExecContext(ctx, "INSERT OR REPLACE INTO metadata (path, size, mtime, checksum, indexed_at) VALUES ('__schema_version', 2, 0, 'normalized_embeddings', 0)")
+	if err != nil {
+		return errors.WrapOp(errors.CodeDatabase, "migrateNormalizedEmbeddings", "update schema version failed", err)
+	}
+
+	return tx.Commit()
+}
+
+// loadVectorIndex loads all embeddings from SQLite and builds the HNSW vector index.
+func (s *Store) loadVectorIndex(ctx context.Context) error {
+	s.vectorIdx = search.NewVectorIndex(search.DefaultVectorIndexConfig(s.config.VectorDimensions))
+
+	rows, err := s.db.QueryContext(ctx, "SELECT id, embedding FROM memories WHERE embedding IS NOT NULL")
+	if err != nil {
+		return errors.WrapOp(errors.CodeDatabase, "loadVectorIndex", "query embeddings failed", err)
+	}
+	defer rows.Close()
+
+	embeddings := make(map[string][]float32)
+	for rows.Next() {
+		var id string
+		var blob []byte
+		if err := rows.Scan(&id, &blob); err != nil {
+			continue
+		}
+		emb, err := deserializeEmbedding(blob)
+		if err != nil {
+			continue
+		}
+		embeddings[id] = emb
+	}
+	if err := rows.Err(); err != nil {
+		return errors.WrapOp(errors.CodeDatabase, "loadVectorIndex", "iterate rows failed", err)
+	}
+
+	s.vectorIdx.Build(embeddings)
+	return nil
+}
+
+// VectorIndex returns the underlying HNSW vector index for external access.
+func (s *Store) VectorIndex() *search.VectorIndex {
+	return s.vectorIdx
 }
 
 // wrapErr wraps an error with context.

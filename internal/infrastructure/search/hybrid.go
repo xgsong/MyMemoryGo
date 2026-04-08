@@ -231,3 +231,35 @@ func (e *HybridEngine) SearchFulltext(ctx context.Context, query string, opts *r
 
 	return e.fulltextRepo.SearchFulltext(ctx, query, opts)
 }
+
+// Index adds or updates memory entries in the search index.
+// Delegates to both vector and fulltext repositories.
+func (e *HybridEngine) Index(ctx context.Context, memories []*entity.Memory) error {
+	if e.vectorRepo != nil {
+		if err := e.vectorRepo.Index(ctx, memories); err != nil {
+			return fmt.Errorf("vector index: %w", err)
+		}
+	}
+	if e.fulltextRepo != nil && e.fulltextRepo != e.vectorRepo {
+		if err := e.fulltextRepo.Index(ctx, memories); err != nil {
+			return fmt.Errorf("fulltext index: %w", err)
+		}
+	}
+	return nil
+}
+
+// RemoveFromIndex removes memory entries from the search index.
+// Delegates to both vector and fulltext repositories.
+func (e *HybridEngine) RemoveFromIndex(ctx context.Context, ids []string) error {
+	if e.vectorRepo != nil {
+		if err := e.vectorRepo.RemoveFromIndex(ctx, ids); err != nil {
+			return fmt.Errorf("vector remove: %w", err)
+		}
+	}
+	if e.fulltextRepo != nil && e.fulltextRepo != e.vectorRepo {
+		if err := e.fulltextRepo.RemoveFromIndex(ctx, ids); err != nil {
+			return fmt.Errorf("fulltext remove: %w", err)
+		}
+	}
+	return nil
+}
