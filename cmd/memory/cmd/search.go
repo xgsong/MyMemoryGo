@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -101,10 +102,11 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// truncate truncates a string to maxLen characters.
+// truncate truncates a string to maxLen runes, respecting UTF-8 boundaries.
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	if utf8.RuneCountInString(s) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	runes := []rune(s)
+	return string(runes[:maxLen]) + "..."
 }

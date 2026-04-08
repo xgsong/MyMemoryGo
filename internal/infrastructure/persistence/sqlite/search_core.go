@@ -38,7 +38,7 @@ func (s *Store) Search(ctx context.Context, query string, opts *repository.Searc
 	fulltextCh := make(chan searchResult, 1)
 
 	go func() {
-		hits, err := s.SearchVector(ctx, nil, opts)
+		hits, err := s.SearchVector(ctx, opts.QueryEmbedding, opts)
 		vectorCh <- searchResult{hits: hits, err: err}
 	}()
 

@@ -14,7 +14,9 @@ import (
 func TestNewMMRReranker(t *testing.T) {
 	reranker := search.NewMMRReranker()
 	assert.NotNil(t, reranker)
-	assert.NotNil(t, reranker.Embeddings)
+	// Verify Embeddings map is usable (sync.Map can't be copied, test via operation)
+	_, ok := reranker.Embeddings.Load("nonexistent")
+	assert.False(t, ok) // empty map, should not find anything
 }
 
 func TestMMRReranker_SetEmbedding(t *testing.T) {

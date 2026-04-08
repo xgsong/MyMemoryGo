@@ -3,6 +3,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -90,12 +91,17 @@ func runStore(cmd *cobra.Command, args []string) error {
 	// Output result
 	output := viper.GetString("output")
 	if output == "json" {
-		fmt.Printf(`{"id":"%s","path":"%s","source":"%s","created_at":"%s"}`,
-			resp.Memory.ID,
-			resp.Memory.Path,
-			resp.Memory.Source,
-			resp.Memory.CreatedAt.Format(time.RFC3339))
-		fmt.Println()
+		result := map[string]string{
+			"id":         resp.Memory.ID,
+			"path":       resp.Memory.Path,
+			"source":     string(resp.Memory.Source),
+			"created_at": resp.Memory.CreatedAt.Format(time.RFC3339),
+		}
+		data, err := json.Marshal(result)
+		if err != nil {
+			return errors.WrapOp(errors.CodeInternal, "runStore", "failed to marshal result", err)
+		}
+		fmt.Println(string(data))
 	} else {
 		fmt.Printf("✅ Memory stored successfully\n")
 		fmt.Printf("   ID: %s\n", resp.Memory.ID)

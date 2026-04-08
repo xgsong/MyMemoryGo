@@ -16,10 +16,7 @@ func (s *MemoryApplicationService) SyncIndex(ctx context.Context) error {
 	logger := log.GetLogger(ctx)
 	logger.InfoContext(ctx, "starting index synchronization")
 
-	s.writeMutex.Lock()
-	defer s.writeMutex.Unlock()
-
-	// List all markdown files
+	// List all markdown files (read-only, no lock needed)
 	pattern := "memory/*.md"
 	files, err := s.fileRepo.List(ctx, pattern)
 	if err != nil {
@@ -38,7 +35,7 @@ func (s *MemoryApplicationService) SyncIndex(ctx context.Context) error {
 
 	logger.InfoContext(ctx, "files to sync", "file_count", len(files))
 
-	// Process each file
+	// Process each file (embedding generation happens without the lock)
 	syncedCount := 0
 	errorCount := 0
 	for _, file := range files {
@@ -72,14 +69,30 @@ func (s *MemoryApplicationService) syncFile(ctx context.Context, path string) er
 		return nil
 	}
 
+	// Calculate line numbers from content
+	startLine := 1
+	endLine := 1
+	for _, ch := range text {
+		if ch == '\n' {
+			endLine++
+		}
+	}
+	// Adjust: trailing newline should not count as an extra line
+	if len(text) > 0 && text[len(text)-1] == '\n' && endLine > 1 {
+		endLine--
+	}
+
 	// Create memory entity
 	now := time.Now()
 	memory := &entity.Memory{
+		ID:        domainService.GenerateID(path, startLine, endLine),
 		Path:      path,
 		Content:   text,
 		Source:    source,
 		CreatedAt: now,
 		UpdatedAt: now,
+		StartLine: startLine,
+		EndLine:   endLine,
 		Checksum:  domainService.CalculateChecksum(text),
 	}
 
@@ -88,12 +101,16 @@ func (s *MemoryApplicationService) syncFile(ctx context.Context, path string) er
 		return err
 	}
 
-	// Generate embedding
+	// Generate embedding before acquiring write lock
 	embedding, err := s.embeddingRepo.Embed(ctx, text)
 	if err != nil {
 		return err
 	}
 	memory.Embedding = embedding
+
+	// Acquire write lock only for the actual store operation
+	s.writeMutex.Lock()
+	defer s.writeMutex.Unlock()
 
 	// Store the memory (file + database)
 	return s.memoryRepo.Store(ctx, memory)

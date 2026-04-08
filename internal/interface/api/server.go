@@ -43,7 +43,6 @@ func (s *Server) setupMiddleware() {
 	))
 	s.router.Use(middleware.Recoverer)
 	s.router.Use(middleware.Timeout(60 * time.Second))
-	s.router.Use(middleware.AllowContentType("application/json"))
 }
 
 // setupRoutes configures the API routes.
@@ -54,18 +53,19 @@ func (s *Server) setupRoutes() {
 
 	// API v1 routes
 	s.router.Route("/api/v1", func(r chi.Router) {
-		// Memory operations
-		r.Post("/memories", s.storeMemory)
+		// Routes that accept JSON request bodies
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.AllowContentType("application/json"))
+			r.Post("/memories", s.storeMemory)
+			r.Post("/search", s.searchMemories)
+			r.Post("/sync", s.syncIndex)
+		})
+
+		// Routes that do not require JSON content type
 		r.Get("/memories/{id}", s.getMemory)
 		r.Get("/memories", s.listMemories)
 		r.Delete("/memories/{id}", s.deleteMemory)
-
-		// Search
-		r.Post("/search", s.searchMemories)
 		r.Get("/search", s.searchMemories)
-
-		// Sync
-		r.Post("/sync", s.syncIndex)
 	})
 }
 

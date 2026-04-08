@@ -33,19 +33,31 @@ func InitializeApp(ctx context.Context) (*AppContext, error) {
 	walMode := viper.GetBool("storage.wal_mode")
 
 	// Expand home directory
-	if workspaceDir[:2] == "~/" {
+	if len(workspaceDir) >= 2 && workspaceDir[:2] == "~/" {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return nil, fmt.Errorf("failed to get home directory: %w", err)
 		}
 		workspaceDir = filepath.Join(home, workspaceDir[2:])
+	} else if len(workspaceDir) >= 1 && workspaceDir[0] == '~' {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get home directory: %w", err)
+		}
+		workspaceDir = home
 	}
-	if dbPath[:2] == "~/" {
+	if len(dbPath) >= 2 && dbPath[:2] == "~/" {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return nil, fmt.Errorf("failed to get home directory: %w", err)
 		}
 		dbPath = filepath.Join(home, dbPath[2:])
+	} else if len(dbPath) >= 1 && dbPath[0] == '~' {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get home directory: %w", err)
+		}
+		dbPath = home
 	}
 
 	// Ensure workspace directory exists

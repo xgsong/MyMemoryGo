@@ -90,8 +90,10 @@ func TestAppError_WithOp(t *testing.T) {
 	err := errors.New(errors.CodeDatabase, "query failed")
 	result := err.WithOp("Store")
 
-	assert.Equal(t, err, result)
-	assert.Equal(t, "Store", err.Op)
+	// WithOp returns a new copy, original is unchanged
+	assert.NotEqual(t, err, result)
+	assert.Equal(t, "", err.Op) // original unchanged
+	assert.Equal(t, "Store", result.Op)
 }
 
 func TestAppError_Wrap(t *testing.T) {
@@ -99,8 +101,10 @@ func TestAppError_Wrap(t *testing.T) {
 	err := errors.New(errors.CodeInternal, "wrapper")
 	result := err.Wrap(originalErr)
 
-	assert.Equal(t, err, result)
-	assert.Equal(t, originalErr, err.Err)
+	// Wrap returns a new copy, original is unchanged
+	assert.NotEqual(t, err, result)
+	assert.Nil(t, err.Err) // original unchanged
+	assert.Equal(t, originalErr, result.Err)
 }
 
 func TestAppError_WithFields(t *testing.T) {
@@ -111,8 +115,10 @@ func TestAppError_WithFields(t *testing.T) {
 	}
 	result := err.WithFields(fields)
 
-	assert.Equal(t, err, result)
-	assert.Equal(t, fields, err.Fields)
+	// WithFields returns a new copy, original is unchanged
+	assert.NotEqual(t, err, result)
+	assert.Nil(t, err.Fields) // original unchanged
+	assert.Equal(t, fields, result.Fields)
 }
 
 func TestWrap(t *testing.T) {
@@ -235,6 +241,24 @@ func TestChaining(t *testing.T) {
 	assert.NotNil(t, err.Fields)
 }
 
+func TestWithOpDoesNotMutateSentinel(t *testing.T) {
+	// Verify that WithOp on a sentinel does not mutate the global sentinel
+	original := errors.ErrNotFound
+	result := original.WithOp("GetMemory")
+
+	assert.Equal(t, "", original.Op)   // sentinel unchanged
+	assert.Equal(t, "GetMemory", result.Op) // new copy has the op
+}
+
+func TestWrapDoesNotMutateSentinel(t *testing.T) {
+	innerErr := stderrors.New("inner")
+	original := errors.ErrNotFound
+	result := original.Wrap(innerErr)
+
+	assert.Nil(t, original.Err)   // sentinel unchanged
+	assert.Equal(t, innerErr, result.Err) // new copy has the wrapped error
+}
+
 func BenchmarkAppError_Error(b *testing.B) {
 	err := errors.New(errors.CodeDatabase, "query failed").
 		WithOp("Store").
@@ -242,7 +266,7 @@ func BenchmarkAppError_Error(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		err.Error()
+		_ = err.Error()
 	}
 }
 

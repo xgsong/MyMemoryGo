@@ -142,13 +142,53 @@ func (fm *Manager) List(ctx context.Context, pattern string) ([]string, error) {
 // Helper methods
 
 func (fm *Manager) resolvePath(path string) string {
-	// If path is absolute, use as-is
-	if filepath.IsAbs(path) {
-		return path
+	// Clean the path to remove any .. or . elements
+	cleaned := filepath.Clean(path)
+
+	// If path is absolute or tries to escape workspace, force it within workspace
+	if filepath.IsAbs(cleaned) {
+		// Check if the absolute path is within the workspace
+		absWorkspace, err := filepath.Abs(fm.config.WorkspaceDir)
+		if err != nil {
+			absWorkspace = fm.config.WorkspaceDir
+		}
+		if !isSubPath(absWorkspace, cleaned) {
+			// Path traversal attempt — confine to workspace
+			return filepath.Join(absWorkspace, filepath.Base(cleaned))
+		}
+		return cleaned
 	}
 
-	// If path is relative to workspace
-	return filepath.Join(fm.config.WorkspaceDir, path)
+	// For relative paths, join with workspace and verify it stays within
+	joined := filepath.Join(fm.config.WorkspaceDir, cleaned)
+	absWorkspace, err := filepath.Abs(fm.config.WorkspaceDir)
+	if err != nil {
+		absWorkspace = fm.config.WorkspaceDir
+	}
+	if !isSubPath(absWorkspace, joined) {
+		// Path traversal attempt — confine to workspace
+		return filepath.Join(absWorkspace, filepath.Base(cleaned))
+	}
+
+	return joined
+}
+
+// isSubPath checks if target is within base directory.
+func isSubPath(base, target string) bool {
+	// Ensure both paths are absolute and cleaned
+	absBase, err := filepath.Abs(base)
+	if err != nil {
+		return false
+	}
+	absTarget, err := filepath.Abs(target)
+	if err != nil {
+		return false
+	}
+	// Ensure base ends with separator for proper prefix matching
+	if len(absBase) > 0 && absBase[len(absBase)-1] != filepath.Separator {
+		absBase += string(filepath.Separator)
+	}
+	return len(absTarget) >= len(absBase) && absTarget[:len(absBase)] == absBase
 }
 
 func (fm *Manager) exists(path string) bool {

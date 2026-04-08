@@ -23,6 +23,18 @@ func sourceFromString(s string) entity.SourceType {
 	}
 }
 
+// sourcesToTypes converts a slice of strings to SourceType slice.
+func sourcesToTypes(sources []string) []entity.SourceType {
+	if len(sources) == 0 {
+		return nil
+	}
+	result := make([]entity.SourceType, 0, len(sources))
+	for _, s := range sources {
+		result = append(result, sourceFromString(s))
+	}
+	return result
+}
+
 // parseIntParam parses an integer parameter with a default value.
 func parseIntParam(s string, defaultValue int) int {
 	if s == "" {

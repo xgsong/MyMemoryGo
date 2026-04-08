@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -22,6 +23,7 @@ import (
 
 // mockEmbeddingProvider is a mock implementation of the embedding repository for testing.
 type mockEmbeddingProvider struct {
+	mu         sync.Mutex
 	embeddings map[string][]float32
 }
 
@@ -32,6 +34,9 @@ func newMockEmbeddingProvider() *mockEmbeddingProvider {
 }
 
 func (m *mockEmbeddingProvider) Embed(ctx context.Context, text string) ([]float32, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	// Return cached embedding if exists
 	if emb, ok := m.embeddings[text]; ok {
 		return emb, nil
@@ -46,13 +51,21 @@ func (m *mockEmbeddingProvider) Embed(ctx context.Context, text string) ([]float
 }
 
 func (m *mockEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	embeddings := make([][]float32, len(texts))
 	for i, text := range texts {
-		emb, err := m.Embed(ctx, text)
-		if err != nil {
-			return nil, err
+		if emb, ok := m.embeddings[text]; ok {
+			embeddings[i] = emb
+			continue
 		}
-		embeddings[i] = emb
+		embedding := make([]float32, 768)
+		for j := range embedding {
+			embedding[j] = float32((len(text)+j)%100) / 100.0
+		}
+		m.embeddings[text] = embedding
+		embeddings[i] = embedding
 	}
 	return embeddings, nil
 }

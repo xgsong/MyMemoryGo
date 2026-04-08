@@ -54,15 +54,18 @@ func (s *MemoryApplicationService) StoreMemory(ctx context.Context, req *StoreMe
 	now := time.Now()
 
 	// Calculate line numbers from content
-	contentLines := len(req.Content)
 	startLine := 1
 	endLine := 1
-	if contentLines > 0 {
+	if req.Content != "" {
 		// Count actual lines in content
 		for _, ch := range req.Content {
 			if ch == '\n' {
 				endLine++
 			}
+		}
+		// Adjust: trailing newline should not count as an extra line
+		if req.Content[len(req.Content)-1] == '\n' && endLine > 1 {
+			endLine--
 		}
 	}
 

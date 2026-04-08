@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/xgsong/MyMemoryGo/internal/application/service"
+	"github.com/xgsong/MyMemoryGo/internal/pkg/log"
 )
 
 // healthCheck handles GET /health.
@@ -43,7 +44,7 @@ type storeMemoryRequest struct {
 func (s *Server) storeMemory(w http.ResponseWriter, r *http.Request) {
 	var req storeMemoryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		respondError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
 
@@ -63,7 +64,8 @@ func (s *Server) storeMemory(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.memoryApp.StoreMemory(r.Context(), appReq)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to store memory: "+err.Error())
+		log.GetLogger(r.Context()).ErrorContext(r.Context(), "store memory failed", "error", err)
+		respondError(w, http.StatusInternalServerError, "failed to store memory")
 		return
 	}
 
@@ -86,7 +88,8 @@ func (s *Server) getMemory(w http.ResponseWriter, r *http.Request) {
 
 	memory, err := s.memoryApp.GetMemory(r.Context(), decodedID)
 	if err != nil {
-		respondError(w, http.StatusNotFound, "memory not found: "+err.Error())
+		log.GetLogger(r.Context()).ErrorContext(r.Context(), "get memory failed", "error", err)
+		respondError(w, http.StatusNotFound, "memory not found")
 		return
 	}
 
@@ -114,7 +117,8 @@ func (s *Server) listMemories(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.memoryApp.ListMemories(r.Context(), req)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to list memories: "+err.Error())
+		log.GetLogger(r.Context()).ErrorContext(r.Context(), "list memories failed", "error", err)
+		respondError(w, http.StatusInternalServerError, "failed to list memories")
 		return
 	}
 
@@ -139,7 +143,8 @@ func (s *Server) deleteMemory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.memoryApp.DeleteMemory(r.Context(), decodedID); err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to delete memory: "+err.Error())
+		log.GetLogger(r.Context()).ErrorContext(r.Context(), "delete memory failed", "error", err)
+		respondError(w, http.StatusInternalServerError, "failed to delete memory")
 		return
 	}
 
@@ -163,7 +168,7 @@ func (s *Server) searchMemories(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == "POST" {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			respondError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+			respondError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
 	} else {
@@ -178,14 +183,16 @@ func (s *Server) searchMemories(w http.ResponseWriter, r *http.Request) {
 	}
 
 	appReq := &service.SearchMemoriesRequest{
-		Query:    req.Query,
-		Limit:    req.Limit,
-		MinScore: req.MinScore,
+		Query:        req.Query,
+		Limit:        req.Limit,
+		MinScore:     req.MinScore,
+		SourceFilter: sourcesToTypes(req.Sources),
 	}
 
 	resp, err := s.memoryApp.SearchMemories(r.Context(), appReq)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to search memories: "+err.Error())
+		log.GetLogger(r.Context()).ErrorContext(r.Context(), "search memories failed", "error", err)
+		respondError(w, http.StatusInternalServerError, "failed to search memories")
 		return
 	}
 
@@ -195,7 +202,8 @@ func (s *Server) searchMemories(w http.ResponseWriter, r *http.Request) {
 // syncIndex handles POST /api/v1/sync.
 func (s *Server) syncIndex(w http.ResponseWriter, r *http.Request) {
 	if err := s.memoryApp.SyncIndex(r.Context()); err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to sync index: "+err.Error())
+		log.GetLogger(r.Context()).ErrorContext(r.Context(), "sync index failed", "error", err)
+		respondError(w, http.StatusInternalServerError, "failed to sync index")
 		return
 	}
 

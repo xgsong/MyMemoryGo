@@ -4,6 +4,8 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -54,7 +56,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if host == "" {
 		host = viper.GetString("api.host")
 		if host == "" {
-			host = "0.0.0.0"
+			host = "127.0.0.1"
 		}
 	}
 
@@ -83,8 +85,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	fmt.Println("Press Ctrl+C to stop...")
 
-	ctx = WaitForInterrupt(ctx)
-
 	errChan := make(chan error, 1)
 	go func() {
 		if err := server.Start(addr); err != nil {
@@ -93,12 +93,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}()
 
 	select {
-	case <-ctx.Done():
+	case <-WaitForInterrupt(ctx).Done():
 		fmt.Println("\nShutting down server...")
-		shutdownCtx := context.Background()
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
 		server.Shutdown(shutdownCtx)
+		shutdownCancel()
 		fmt.Println("Server stopped.")
 	case err := <-errChan:
+		if err == http.ErrServerClosed {
+			return nil
+		}
 		return errors.WrapOp(errors.CodeInternal, "runServe", "server error", err)
 	}
 

@@ -108,6 +108,10 @@ type SearchOptions struct {
 
 	// FulltextWeight is the weight for full-text search results (default 0.3).
 	FulltextWeight float64
+
+	// QueryEmbedding is the pre-computed embedding for the search query.
+	// If nil, vector search will use a fallback score.
+	QueryEmbedding []float32
 }
 
 // DefaultSearchOptions returns SearchOptions with sensible defaults.

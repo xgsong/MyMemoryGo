@@ -73,7 +73,14 @@ func (s *MemoryApplicationService) SearchMemories(ctx context.Context, req *Sear
 		logger.DebugContext(ctx, "temporal decay enabled", "half_life", halfLife.String())
 	}
 
+	// Generate query embedding for vector search
+	queryEmbedding, embedErr := s.embeddingRepo.Embed(ctx, req.Query)
+	if embedErr != nil {
+		logger.WarnContext(ctx, "failed to generate query embedding, vector search will be degraded", "error", embedErr)
+	}
+
 	opts := builder.Build()
+	opts.QueryEmbedding = queryEmbedding
 
 	// Use SearchRepository for hybrid search
 	result, err := s.searchRepo.Search(ctx, req.Query, opts)

@@ -74,18 +74,21 @@ func (e *AppError) Unwrap() error {
 }
 
 func (e *AppError) WithOp(op string) *AppError {
-	e.Op = op
-	return e
+	cp := *e // create a copy to avoid mutating shared sentinels
+	cp.Op = op
+	return &cp
 }
 
 func (e *AppError) Wrap(err error) *AppError {
-	e.Err = err
-	return e
+	cp := *e
+	cp.Err = err
+	return &cp
 }
 
 func (e *AppError) WithFields(fields map[string]interface{}) *AppError {
-	e.Fields = fields
-	return e
+	cp := *e
+	cp.Fields = fields
+	return &cp
 }
 
 func Wrap(code ErrorCode, message string, err error) error {
