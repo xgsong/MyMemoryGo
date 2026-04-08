@@ -45,6 +45,7 @@ type HybridEngine struct {
 	embedder     repository.EmbeddingRepository
 	reranker     Reranker
 	decayCalc    DecayCalculator
+	mu           sync.RWMutex
 }
 
 // Reranker defines the interface for search result reranking.
@@ -78,11 +79,15 @@ func NewHybridEngine(
 
 // SetReranker sets the reranker for the engine.
 func (e *HybridEngine) SetReranker(reranker Reranker) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.reranker = reranker
 }
 
 // SetDecayCalculator sets the decay calculator for the engine.
 func (e *HybridEngine) SetDecayCalculator(calc DecayCalculator) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.decayCalc = calc
 }
 
@@ -92,19 +97,30 @@ func (e *HybridEngine) Search(ctx context.Context, query string, opts *repositor
 
 	// Set default options
 	if opts == nil {
-		opts = &repository.SearchOptions{}
+		opts = repository.DefaultSearchOptions()
 	}
 	if opts.Limit == 0 {
 		opts.Limit = e.config.DefaultLimit
 	}
-	if opts.MinScore == 0 {
-		opts.MinScore = e.config.MinScore
+	// MinScore already has default from DefaultSearchOptions if not set
+	// VectorWeight already has default from DefaultSearchOptions if not set
+	// FulltextWeight already has default from DefaultSearchOptions if not set
+	// Ensure all pointer fields are initialized
+	if opts.MinScore == nil {
+		minScore := e.config.MinScore
+		opts.MinScore = &minScore
 	}
-	if opts.VectorWeight == 0 {
-		opts.VectorWeight = e.config.VectorWeight
+	if opts.VectorWeight == nil {
+		vectorWeight := e.config.VectorWeight
+		opts.VectorWeight = &vectorWeight
 	}
-	if opts.FulltextWeight == 0 {
-		opts.FulltextWeight = e.config.FulltextWeight
+	if opts.FulltextWeight == nil {
+		fulltextWeight := e.config.FulltextWeight
+		opts.FulltextWeight = &fulltextWeight
+	}
+	if opts.MMRLambda == nil {
+		mmrLambda := 0.7
+		opts.MMRLambda = &mmrLambda
 	}
 
 	// Generate query embedding
@@ -152,24 +168,29 @@ func (e *HybridEngine) Search(ctx context.Context, query string, opts *repositor
 	}
 
 	// Merge and deduplicate results
-	merged := e.mergeResults(vectorHits, fulltextHits, opts.VectorWeight, opts.FulltextWeight)
+	merged := e.mergeResults(vectorHits, fulltextHits, *opts.VectorWeight, *opts.FulltextWeight)
 
 	// Apply temporal decay if enabled
-	if opts.UseDecay && e.decayCalc != nil && opts.DecayHalfLife > 0 {
-		e.decayCalc.Apply(merged, opts.DecayHalfLife)
+	e.mu.RLock()
+	decayCalc := e.decayCalc
+	e.mu.RUnlock()
+	
+	if opts.UseDecay && decayCalc != nil && opts.DecayHalfLife > 0 {
+		decayCalc.Apply(merged, opts.DecayHalfLife)
 	}
 
 	// Apply MMR reranking if enabled
-	if opts.UseMMR && e.reranker != nil {
-		lambda := opts.MMRLambda
-		if lambda == 0 {
-			lambda = 0.7 // Default lambda
-		}
-		merged = e.reranker.Rerank(merged, lambda)
+	e.mu.RLock()
+	reranker := e.reranker
+	e.mu.RUnlock()
+	
+	if opts.UseMMR && reranker != nil {
+		lambda := *opts.MMRLambda
+		merged = reranker.Rerank(merged, lambda)
 	}
 
 	// Filter by minimum score and limit
-	result := e.filterAndLimit(merged, opts.MinScore, opts.Limit)
+	result := e.filterAndLimit(merged, *opts.MinScore, opts.Limit)
 
 	return &entity.SearchResult{
 		Hits:     result,

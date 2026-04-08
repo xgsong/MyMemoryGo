@@ -3,6 +3,8 @@ package service
 
 import (
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/xgsong/MyMemoryGo/internal/domain/entity"
 	"github.com/xgsong/MyMemoryGo/internal/domain/errors"
@@ -37,6 +39,45 @@ func ValidateMemory(memory *entity.Memory) error {
 
 	if !IsValidSource(memory.Source) {
 		return errors.NewValidationError("source", fmt.Sprintf("invalid source type: %s", memory.Source))
+	}
+
+	// Validate ID if provided
+	if memory.ID != "" {
+		expectedID := GenerateID(memory.Path, memory.StartLine, memory.EndLine)
+		if memory.ID != expectedID {
+			return errors.NewValidationError("id", fmt.Sprintf("invalid ID format: expected '%s', got '%s'", expectedID, memory.ID))
+		}
+	}
+
+	// Validate Checksum if provided
+	if memory.Checksum != "" {
+		expectedChecksum := CalculateChecksum(memory.Content)
+		if memory.Checksum != expectedChecksum {
+			return errors.NewValidationError("checksum", "content checksum mismatch")
+		}
+	}
+
+	// Validate timestamps if provided
+	if !memory.CreatedAt.IsZero() && !memory.UpdatedAt.IsZero() {
+		if memory.UpdatedAt.Before(memory.CreatedAt) {
+			return errors.NewValidationError("updated_at", "cannot be before created_at")
+		}
+	}
+
+	// Validate Source and Path consistency (if path follows standard patterns)
+	if memory.Source == entity.SourceDaily {
+		if strings.HasPrefix(memory.Path, "memory/") && strings.HasSuffix(memory.Path, ".md") {
+			datePart := strings.TrimSuffix(strings.TrimPrefix(memory.Path, "memory/"), ".md")
+			if _, err := time.Parse("2006-01-02", datePart); err != nil {
+				return errors.NewValidationError("path", fmt.Sprintf("daily memory path should contain valid date, got '%s'", datePart))
+			}
+		}
+	} else if memory.Source == entity.SourceSession {
+		if strings.HasPrefix(memory.Path, "session/") && strings.HasSuffix(memory.Path, ".md") {
+			// Session path format is optional, no strict validation
+		}
+	} else if memory.Source == entity.SourceLongTerm {
+		// Long-term memory can be stored in any path, no strict validation
 	}
 
 	return nil

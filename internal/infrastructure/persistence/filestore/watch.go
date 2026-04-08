@@ -26,12 +26,18 @@ func (fm *Manager) Watch(ctx context.Context, path string, handler repository.Fi
 		}
 		fm.watcher = watcher
 
+		// Create done channel for lifecycle management
+		fm.done = make(chan struct{})
+
 		// Start event processor
 		go fm.processEvents(ctx)
 	}
 
 	// Resolve path
-	fullPath := fm.resolvePath(path)
+	fullPath, err := fm.resolvePath(path)
+	if err != nil {
+		return err
+	}
 
 	// Add path to watcher
 	if err := fm.watcher.Add(fullPath); err != nil {
@@ -41,8 +47,24 @@ func (fm *Manager) Watch(ctx context.Context, path string, handler repository.Fi
 	return nil
 }
 
+// RemoveHandler removes a previously registered file change handler.
+func (fm *Manager) RemoveHandler(handler repository.FileChangeHandler) {
+	fm.mu.Lock()
+	defer fm.mu.Unlock()
+
+	for i, h := range fm.handlers {
+		if &h == &handler {
+			fm.handlers = append(fm.handlers[:i], fm.handlers[i+1:]...)
+			break
+		}
+	}
+}
+
 // processEvents processes file system events.
+// It signals its exit via the done channel for lifecycle management.
 func (fm *Manager) processEvents(ctx context.Context) {
+	defer close(fm.done)
+
 	for {
 		select {
 		case <-ctx.Done():

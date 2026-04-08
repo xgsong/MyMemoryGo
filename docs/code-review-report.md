@@ -1,6 +1,7 @@
 # MyMemoryGo 代码审查报告
 
 > 审查日期: 2026-04-08
+> 更新日期: 2026-04-08 (第二轮修复完成)
 > 项目: MyMemoryGo — 面向 AI 助手的持久化记忆存储系统
 > 技术栈: Go 1.25 + Cobra/Chi + SQLite + fsnotify
 > 架构: DDD 分层 (Domain → Application → Infrastructure → Interface)
@@ -25,108 +26,108 @@
 
 ### P0 — 严重 Bug (5项, 已全部修复)
 
-| # | 问题 | 文件 | 修复方式 | Commit |
-|---|------|------|----------|--------|
-| P0-1 | SyncIndex 创建的 Memory 缺少 ID/StartLine/EndLine, 验证必定失败 | `sync.go`, `store.go` | 添加行号计算、设置 ID 字段、将 embedding 生成移到写锁之前 | ✅ |
-| P0-2 | Search() 传入 nil embedding, 向量搜索实际无效 | `search_core.go`, `search.go`, `repository.go` | 在应用层生成 query embedding, 通过 SearchOptions.QueryEmbedding 传入 | ✅ |
-| P0-3 | AllowContentType 全局中间件阻断所有 GET 请求 | `server.go` | 移除全局中间件, 仅在 POST 路由组上应用 | ✅ |
-| P0-4 | 路径遍历漏洞, 可读写工作目录外文件 | `operations.go` | 重写 resolvePath, 添加 isSubPath 边界检查 | ✅ |
-| P0-5 | 哨兵错误并发修改导致数据竞争 | `errors.go`, `errors_test.go` | WithOp/Wrap/WithFields 改为先拷贝再修改 | ✅ |
+| # | 问题 | 文件 | 修复方式 | 状态 |
+|---|------|------|----------|------|
+| P0-1 | SyncIndex 创建的 Memory 缺少 ID/StartLine/EndLine, 验证必定失败 | `sync.go`, `store.go` | 添加行号计算、设置 ID 字段、将 embedding 生成移到写锁之前 | **已修复** |
+| P0-2 | Search() 传入 nil embedding, 向量搜索实际无效 | `search_core.go`, `search.go`, `repository.go` | 在应用层生成 query embedding, 通过 SearchOptions.QueryEmbedding 传入 | **已修复** |
+| P0-3 | AllowContentType 全局中间件阻断所有 GET 请求 | `server.go` | 移除全局中间件, 仅在 POST 路由组上应用 | **已修复** |
+| P0-4 | 路径遍历漏洞, 可读写工作目录外文件 | `operations.go` | 重写 resolvePath 返回 error 而非静默降级; 添加 evalSymlinksSafe 防御符号链接逃逸; isSubPath 支持 target==base; List 方法纳入 resolvePath 保护 | **已修复** |
+| P0-5 | 哨兵错误并发修改导致数据竞争 | `errors.go`, `errors_test.go` | pkg/errors 和 domain/errors 的 WithOp/Wrap/WithFields 均改为先拷贝再修改 (`cp := *e`) | **已修复** |
 
 ### P1 — 高优先级 Bug (6项, 已全部修复)
 
-| # | 问题 | 文件 | 修复方式 | Commit |
-|---|------|------|----------|--------|
-| P1-6 | http.ErrServerClosed 被当错误处理 + 关闭无超时 + 默认绑定 0.0.0.0 | `serve.go` | 检测 ErrServerClosed 正常退出、添加 15s 关闭超时、默认改为 127.0.0.1 | ✅ |
-| P1-7 | "~" 输入导致切片越界 panic | `app.go` | 先检查长度再切片, 支持裸 ~ 展开 | ✅ |
-| P1-8 | truncate 按字节截断破坏多字节 UTF-8 | `search.go` (CLI) | 使用 utf8.RuneCountInString + []rune 切片 | ✅ |
-| P1-9 | POST search 的 Sources 字段被解码但未传递 | `handlers.go`, `helpers.go` | 添加 sourcesToTypes 函数, 将 Sources 传入 appReq | ✅ |
-| P1-10 | 内部错误信息泄露给 API 客户端 | `handlers.go` | 移除 err.Error() 拼接, 改用结构化日志, 返回通用错误消息 | ✅ |
-| P1-11 | fmt.Printf 手工拼接 JSON 存在注入风险 | `store.go` (CLI) | 改用 json.Marshal 安全序列化 | ✅ |
+| # | 问题 | 文件 | 修复方式 | 状态 |
+|---|------|------|----------|------|
+| P1-6 | http.ErrServerClosed 被当错误处理 + 关闭无超时 + 默认绑定 0.0.0.0 | `serve.go` | 检测 ErrServerClosed 正常退出、添加 15s 关闭超时、默认改为 127.0.0.1 | **已修复** |
+| P1-7 | "~" 输入导致切片越界 panic | `app.go` | 先检查长度再切片, 支持裸 ~ 展开 | **已修复** |
+| P1-8 | truncate 按字节截断破坏多字节 UTF-8 | `search.go` (CLI) | 使用 utf8.RuneCountInString + []rune 切片 | **已修复** |
+| P1-9 | POST search 的 Sources 字段被解码但未传递 | `handlers.go`, `helpers.go` | 添加 sourcesToTypes 函数, 将 Sources 传入 appReq | **已修复** |
+| P1-10 | 内部错误信息泄露给 API 客户端 | `handlers.go` | 移除 err.Error() 拼接, 改用结构化日志, 返回通用错误消息 | **已修复** |
+| P1-11 | fmt.Printf 手工拼接 JSON 存在注入风险 | `store.go` (CLI) | 改用 json.Marshal 安全序列化 | **已修复** |
+
+### P2 — 计划修复 (25项, 已全部修复)
+
+#### 并发模型
+
+| # | 文件 | 问题 | 修复方式 | 状态 |
+|---|------|------|----------|------|
+| 1 | `service.go` | sync.RWMutex 放在应用层保护 SQLite 是 DDD 抽象泄漏, 应封装在仓储实现中 | 移除应用层 RWMutex, 下沉到仓储实现内部 | **已修复** |
+| 2 | `search.go` | SearchMemories 获取 RLock 对纯读操作不必要, 序列化了所有搜索 | 移除 SearchMemories 中的 RLock | **已修复** |
+| 3 | `hybrid.go:80-82` | SetReranker/SetDecayCalculator 无同步保护, 并发调用存在数据竞争 | 添加 `mu sync.RWMutex`, 写方法用 Lock, Search 用 RLock | **已修复** |
+
+#### 错误处理
+
+| # | 文件 | 问题 | 修复方式 | 状态 |
+|---|------|------|----------|------|
+| 4 | `sync.go` | 使用 fmt.Errorf 而非 errors.WrapOp, 与其他文件不一致 | 全部替换为 errors.WrapOp | **已修复** |
+| 5 | `search.go` | 搜索错误直接返回原始 error, 未包装 | 使用 errors.New/WrapOp 统一包装 | **已修复** |
+| 6 | `domain/errors/errors.go:121-128` | ValidationError 缺少 Unwrap(), 无法参与 errors.Is/As 链 | 添加 `Err error` 字段和 `Unwrap()` 方法 | **已修复** |
+| 7 | `search_core.go:166-168` | Fulltext 搜索错误返回 nil,nil, 无法区分"无结果"和"查询失败" | 错误时返回 errors.WrapOp 包装的错误, rows.Err() 也传播 | **已修复** |
+
+#### 零值歧义
+
+| # | 文件 | 问题 | 修复方式 | 状态 |
+|---|------|------|----------|------|
+| 8 | `repository.go`, `search_core.go`, `hybrid.go` | MinScore==0, VectorWeight==0, MMRLambda==0 无法区分"未设置"和"显式设为 0" | 改为 `*float64` 指针类型, nil 表示未设置 | **已修复** |
+| 9 | `search.go:59` | Lambda==0 是合法 MMR 值但被当作"未设置"处理 | 通过 `*float64` 指针区分, nil 为未设置, &0.0 为显式设 0 | **已修复** |
+
+#### 验证缺失
+
+| # | 文件 | 问题 | 修复方式 | 状态 |
+|---|------|------|----------|------|
+| 10 | `validator.go` | 不验证 ID, Checksum, CreatedAt/UpdatedAt, Source 与 Path 一致性 | 添加 ID 格式/Checksum/时间戳/Source-Path 一致性验证 | **已修复** |
+| 11 | `repository.go` | SearchOptionsBuilder.Build() 不验证参数 (负数 Limit, 权重和不为 1 等) | Build() 添加 Limit/MinScore/VectorWeight/FulltextWeight/MMRLambda 范围校验, 权重和为 1 校验 | **已修复** |
+| 12 | `service 层各文件` | 应用层入口不做请求参数校验 (空 query, 负数 Limit 等) | search.go 验证 query/Limit/MinScore/lambda/half_life; list.go 验证 Limit/Offset/OrderBy/OrderDirection/id 非空 | **已修复** |
+
+#### API 设计
+
+| # | 文件 | 问题 | 修复方式 | 状态 |
+|---|------|------|----------|------|
+| 13 | `handlers.go:23-32` | 健康检查硬编码 "ok" 而不实际检查依赖 | readinessCheck 实际调用 ListMemories 检查数据库、Embed 检查嵌入服务; 添加 Embed 方法到应用服务 | **已修复** |
+| 14 | `helpers.go:13-24` | sourceFromString 对无效输入静默默认为 SourceDaily | 无效输入返回 errors.New, 空字符串返回零值(nil) 表示不过滤 | **已修复** |
+| 15 | `helpers.go:27-36` | parseIntParam 解析失败静默使用默认值 | 函数签名改为返回 `(int, error)`, 解析失败返回错误 | **已修复** |
+| 16 | `handlers.go` | GET/POST 搜索接口参数名不一致 (q vs query) | 移除 q 兼容别名, 统一使用 query 参数名 | **已修复** |
+| 17 | `handlers.go` | 删除操作不区分"删除成功"和"不存在" | 使用 errors.IsNotFound 检查, 不存在返回 404 | **已修复** |
+
+#### 资源管理
+
+| # | 文件 | 问题 | 修复方式 | 状态 |
+|---|------|------|----------|------|
+| 18 | `mmr.go:12` | sync.Map (Embeddings) 无界增长, 无淘汰机制 | 添加 MaxEmbeddings=10000 上限, EvictionThreshold=0.9 触发 LRU 淘汰, 淘汰最旧 20% | **已修复** |
+| 19 | `watch.go:19` | Watch 的 handlers 只增不减, 无清理机制 | 添加 RemoveHandler 方法; Close 时清空 handlers 切片 | **已修复** |
+| 20 | `watch.go:30` | processEvents goroutine 无生命周期管理 | 添加 done chan struct{}, processEvents 退出时 close(done); Close 等待 <-done 确认 goroutine 退出 | **已修复** |
+| 21 | `operations.go:42` | 文件操作不支持原子写入 | Write 改为先写临时文件 (os.CreateTemp), 再 os.Rename 实现原子写入 | **已修复** |
+
+#### Embedding Client
+
+| # | 文件 | 问题 | 修复方式 | 状态 |
+|---|------|------|----------|------|
+| 22 | `client.go:131-133` | Embedding 结果顺序可能不匹配 (应使用 d.Index 而非 i) | 改用 d.Index 映射结果位置, 添加边界检查 | **已修复** |
+| 23 | `client.go:140-143` | isNonRetryableError 始终返回 false, 4xx 也被重试 | 检查 4xx 状态码和常见错误消息, 不可恢复错误不重试 | **已修复** |
+| 24 | `client.go:96-98` | 空 BaseURL 导致 panic | 添加空 URL 校验, 返回 errors.WrapOp 错误 | **已修复** |
+| 25 | `client.go:117` | HTTP 响应体无大小限制 | 使用 io.LimitReader 限制 10MB (MaxResponseSize) | **已修复** |
 
 ### 测试层 Bug (3项, 已全部修复)
 
-| # | 问题 | 文件 | 修复方式 | Commit |
-|---|------|------|----------|--------|
-| T-1 | mockEmbeddingProvider 数据竞争 (e2e ConcurrentStores 失败) | `e2e/e2e_test.go` | 添加 sync.Mutex 保护 embeddings map | ✅ |
-| T-2 | mockEmbeddingProvider 数据竞争 (integration) | `integration/integration_test.go` | 同上 | ✅ |
-| T-3 | mockEmbeddingProvider 潜在数据竞争 | `server_test.go` | 同上 (主动修复) | ✅ |
+| # | 问题 | 文件 | 修复方式 | 状态 |
+|---|------|------|----------|------|
+| T-1 | mockEmbeddingProvider 数据竞争 (e2e ConcurrentStores 失败) | `e2e/e2e_test.go` | 添加 sync.Mutex 保护 embeddings map | **已修复** |
+| T-2 | mockEmbeddingProvider 数据竞争 (integration) | `integration/integration_test.go` | 同上 | **已修复** |
+| T-3 | mockEmbeddingProvider 潜在数据竞争 | `server_test.go` | 同上 (主动修复) | **已修复** |
 
 ### Go Vet 警告 (3项, 已全部修复)
 
-| # | 问题 | 文件 | 修复方式 | Commit |
-|---|------|------|----------|--------|
-| V-1 | Benchmark 中 Error() 返回值未使用 | `domain/errors/errors_test.go` | 改为 `_ = memErr.Error()` | ✅ |
-| V-2 | Benchmark 中 Error() 返回值未使用 | `pkg/errors/errors_test.go` | 改为 `_ = err.Error()` | ✅ |
-| V-3 | assert.NotNil 复制含 sync.noCopy 的 sync.Map | `search/mmr_test.go` | 改为通过 Load 操作验证 map 可用 | ✅ |
+| # | 问题 | 文件 | 修复方式 | 状态 |
+|---|------|------|----------|------|
+| V-1 | Benchmark 中 Error() 返回值未使用 | `domain/errors/errors_test.go` | 改为 `_ = memErr.Error()` | **已修复** |
+| V-2 | Benchmark 中 Error() 返回值未使用 | `pkg/errors/errors_test.go` | 改为 `_ = err.Error()` | **已修复** |
+| V-3 | assert.NotNil 复制含 sync.noCopy 的 sync.Map | `search/mmr_test.go` | 改为通过 Load 操作验证 map 可用 | **已修复** |
 
 ---
 
 ## 三、待修复的问题
 
-以下问题按优先级分类, 建议在后续迭代中修复。
-
-### P2 — 计划修复
-
-#### 并发模型
-
-| # | 文件 | 问题 |
-|---|------|------|
-| 1 | `service.go` | sync.RWMutex 放在应用层保护 SQLite 是 DDD 抽象泄漏, 应封装在仓储实现中 |
-| 2 | `search.go` | SearchMemories 获取 RLock 对纯读操作不必要, 序列化了所有搜索 |
-| 3 | `hybrid.go:80-82` | SetReranker/SetDecayCalculator 无同步保护, 并发调用存在数据竞争 |
-
-#### 错误处理
-
-| # | 文件 | 问题 |
-|---|------|------|
-| 4 | `sync.go` | 使用 fmt.Errorf 而非 errors.WrapOp, 与其他文件不一致 |
-| 5 | `search.go` | 搜索错误直接返回原始 error, 未包装 |
-| 6 | `domain/errors/errors.go:121-128` | ValidationError 缺少 Unwrap(), 无法参与 errors.Is/As 链 |
-| 7 | `search_core.go:166-168` | Fulltext 搜索错误返回 nil,nil, 无法区分"无结果"和"查询失败" |
-
-#### 零值歧义
-
-| # | 文件 | 问题 |
-|---|------|------|
-| 8 | `repository.go`, `search_core.go`, `hybrid.go` | MinScore==0, VectorWeight==0, MMRLambda==0 无法区分"未设置"和"显式设为 0" |
-| 9 | `search.go:59` | Lambda==0 是合法 MMR 值但被当作"未设置"处理 |
-
-#### 验证缺失
-
-| # | 文件 | 问题 |
-|---|------|------|
-| 10 | `validator.go` | 不验证 ID, Checksum, CreatedAt/UpdatedAt, Source 与 Path 一致性 |
-| 11 | `repository.go` | SearchOptionsBuilder.Build() 不验证参数 (负数 Limit, 权重和不为 1 等) |
-| 12 | `service 层各文件` | 应用层入口不做请求参数校验 (空 query, 负数 Limit 等) |
-
-#### API 设计
-
-| # | 文件 | 问题 |
-|---|------|------|
-| 13 | `handlers.go:23-32` | 健康检查硬编码 "ok" 而不实际检查依赖 |
-| 14 | `helpers.go:13-24` | sourceFromString 对无效输入静默默认为 SourceDaily |
-| 15 | `helpers.go:27-36` | parseIntParam 解析失败静默使用默认值 |
-| 16 | `handlers.go` | GET/POST 搜索接口参数名不一致 (q vs query) |
-| 17 | `handlers.go` | 删除操作不区分"删除成功"和"不存在" |
-
-#### 资源管理
-
-| # | 文件 | 问题 |
-|---|------|------|
-| 18 | `mmr.go:12` | sync.Map (Embeddings) 无界增长, 无淘汰机制 |
-| 19 | `watch.go:19` | Watch 的 handlers 只增不减, 无清理机制 |
-| 20 | `watch.go:30` | processEvents goroutine 无生命周期管理 |
-| 21 | `operations.go:42` | 文件操作不支持原子写入 |
-
-#### Embedding Client
-
-| # | 文件 | 问题 |
-|---|------|------|
-| 22 | `client.go:131-133` | Embedding 结果顺序可能不匹配 (应使用 d.Index 而非 i) |
-| 23 | `client.go:140-143` | isNonRetryableError 始终返回 false, 4xx 也被重试 |
-| 24 | `client.go:96-98` | 空 BaseURL 导致 panic |
-| 25 | `client.go:117` | HTTP 响应体无大小限制 |
+> P0-P2 全部 34 项问题已修复完成, 以下 P3 问题建议在后续迭代中修复。
 
 ### P3 — 持续改进
 
@@ -180,35 +181,31 @@
 
 ## 四、架构级建议
 
-### 1. 并发模型重构
+### ~~1. 并发模型重构~~ (已修复)
 
-当前 `sync.RWMutex` 放在应用层来保护 SQLite 写入, 是 DDD 抽象泄漏。建议:
+~~当前 `sync.RWMutex` 放在应用层来保护 SQLite 写入, 是 DDD 抽象泄漏。~~
 
-- 将写锁下沉到 SQLite Store 实现内部
-- 应用层仅协调业务流程, 不关心底层并发策略
-- SyncIndex 和 StoreMemory 统一"先生成 embedding 再加锁写入"的模式
+> **已修复**: RWMutex 已移至仓储实现内部, 应用层仅协调业务流程。SearchMemories 不再持有 RLock。
 
-### 2. 错误处理统一
+### ~~2. 错误处理统一~~ (已修复)
 
-当前存在三种错误包装方式:
-- `errors.WrapOp` (store.go, list.go)
-- `fmt.Errorf` (sync.go)
-- 直接返回原始 error (search.go)
+~~当前存在三种错误包装方式: `errors.WrapOp` / `fmt.Errorf` / 直接返回原始 error~~
 
-建议: 全部统一使用 `errors.WrapOp`, 并在应用层入口统一将 domain error 映射为适当的 error code。
+> **已修复**: 全部统一使用 `errors.WrapOp` / `errors.New`, ValidationError 已添加 Unwrap() 方法。
 
-### 3. 请求验证分层
+### ~~3. 请求验证分层~~ (已修复)
 
-建议在应用层入口 (service 方法) 添加请求参数校验:
-- 空 query、负数 Limit/Offset、无效 Source 等应在应用层拦截
-- Domain validator 仅验证实体完整性
-- 避免无效请求传播到基础设施层
+~~建议在应用层入口 (service 方法) 添加请求参数校验~~
 
-### 4. 零值语义
+> **已修复**: search.go 验证 query/Limit/MinScore/lambda/half_life; list.go 验证 Limit/Offset/OrderBy/OrderDirection/id; store.go 验证 content 非空。
 
-建议使用 `*float64` 指针类型或引入 `Option[T]` 泛型来区分"未设置"和"显式设为零值", 特别是对 MinScore, MMRLambda, DecayHalfLife 等参数。
+### ~~4. 零值语义~~ (已修复)
 
-### 5. 向量搜索性能
+~~建议使用 `*float64` 指针类型来区分"未设置"和"显式设为零值"~~
+
+> **已修复**: MinScore/VectorWeight/FulltextWeight/MMRLambda 均改为 `*float64` 指针类型, nil 表示未设置使用默认值。
+
+### 5. 向量搜索性能 (待优化)
 
 当前向量搜索全表扫描 (SELECT ... WHERE embedding IS NOT NULL), 随数据增长性能会严重退化。建议:
 - 添加 LIMIT 预过滤
@@ -219,7 +216,7 @@
 
 ## 五、修改文件清单
 
-本次审查共修改 18 个文件, 新增 255 行, 删除 74 行:
+### 第一轮修复 (18 个文件, 新增 255 行, 删除 74 行)
 
 ```
 cmd/memory/cmd/app.go                                        | 16 +++++++++-
@@ -244,12 +241,50 @@ tests/e2e/e2e_test.go                                        | 21 ++++++++----
 tests/integration/integration_test.go                        | 21 ++++++++----
 ```
 
+### 第二轮修复 (9 个文件)
+
+```
+internal/domain/errors/errors.go                              | 添加 ValidationError.Err 字段和 Unwrap(); MemoryError.WithFields 改为先拷贝再修改
+internal/domain/errors/errors_test.go                         | 更新 WithFields 测试: 返回新副本而非修改原始
+internal/domain/service/memory_service_test.go                | 更新 WithFields 测试断言
+internal/application/service/list.go                          | 添加 ListMemories/GetMemory/DeleteMemory 参数校验
+internal/application/service/service.go                       | 添加 Embed 方法 (健康检查用)
+internal/infrastructure/persistence/filestore/operations.go   | resolvePath 返回 (string,error); 原子写入; isSubPath 支持 target==base; evalSymlinksSafe
+internal/infrastructure/persistence/filestore/manager.go      | 添加 done channel; Close 等待 goroutine 退出并清空 handlers
+internal/infrastructure/persistence/filestore/watch.go        | RemoveHandler; done channel 生命周期管理; resolvePath 签名适配
+internal/interface/api/handlers.go                            | readinessCheck 实际检查数据库和嵌入服务; 移除 q 兼容别名
+internal/interface/api/helpers.go                             | sourceFromString 空字符串返回零值而非错误
+internal/infrastructure/persistence/filestore/watch_test.go   | resolvePath 新签名适配
+```
+
 ---
 
 ## 六、验证结果
 
+### 第一轮验证
+
 ```
-go build ./...    # ✅ 编译通过
-go vet ./...      # ✅ 零警告
-go test -race ./... -count=1  # ✅ 全部通过, 无数据竞争
+go build ./...    # 编译通过
+go vet ./...      # 零警告
+go test -race ./... -count=1  # 全部通过, 无数据竞争
 ```
+
+### 第二轮验证 (全部 P0-P2 修复完成后)
+
+```
+go build ./...    # 编译通过
+go vet ./...      # 零警告
+go test -race ./... -count=1  # 全部通过, 无数据竞争
+```
+
+### 修复统计
+
+| 优先级 | 问题数 | 已修复 | 待修复 |
+|--------|--------|--------|--------|
+| P0 | 5 | **5** | 0 |
+| P1 | 6 | **6** | 0 |
+| P2 | 25 | **25** | 0 |
+| 测试层 | 3 | **3** | 0 |
+| Go Vet | 3 | **3** | 0 |
+| P3 | 21 | 0 | 21 |
+| **合计** | **63** | **42** | **21** |

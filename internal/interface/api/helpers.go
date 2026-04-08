@@ -3,48 +3,59 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 
 	"github.com/xgsong/MyMemoryGo/internal/domain/entity"
+	"github.com/xgsong/MyMemoryGo/internal/pkg/errors"
 )
 
 // sourceFromString converts a string to SourceType.
-func sourceFromString(s string) entity.SourceType {
+// Returns zero value and no error for empty string (meaning "no filter").
+func sourceFromString(s string) (entity.SourceType, error) {
+	if s == "" {
+		return "", nil
+	}
 	switch s {
 	case "longterm":
-		return entity.SourceLongTerm
+		return entity.SourceLongTerm, nil
 	case "daily":
-		return entity.SourceDaily
+		return entity.SourceDaily, nil
 	case "session":
-		return entity.SourceSession
+		return entity.SourceSession, nil
 	default:
-		return entity.SourceDaily
+		return "", errors.New(errors.CodeInvalidInput, fmt.Sprintf("invalid source type: %s", s))
 	}
 }
 
 // sourcesToTypes converts a slice of strings to SourceType slice.
-func sourcesToTypes(sources []string) []entity.SourceType {
+func sourcesToTypes(sources []string) ([]entity.SourceType, error) {
 	if len(sources) == 0 {
-		return nil
+		return nil, nil
 	}
 	result := make([]entity.SourceType, 0, len(sources))
 	for _, s := range sources {
-		result = append(result, sourceFromString(s))
+		sourceType, err := sourceFromString(s)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, sourceType)
 	}
-	return result
+	return result, nil
 }
 
 // parseIntParam parses an integer parameter with a default value.
-func parseIntParam(s string, defaultValue int) int {
+// Returns error if the parameter is present but not a valid integer.
+func parseIntParam(s string, defaultValue int) (int, error) {
 	if s == "" {
-		return defaultValue
+		return defaultValue, nil
 	}
 	val, err := strconv.Atoi(s)
 	if err != nil {
-		return defaultValue
+		return 0, errors.New(errors.CodeInvalidInput, fmt.Sprintf("invalid integer parameter: %s", s))
 	}
-	return val
+	return val, nil
 }
 
 // parseFloatParam parses a float parameter with a default value.

@@ -8,16 +8,94 @@ import (
 	"github.com/xgsong/MyMemoryGo/internal/pkg/vector"
 )
 
+const (
+	DefaultMaxEmbeddings = 10000
+	EvictionThreshold   = 0.9
+)
+
 type MMRReranker struct {
-	Embeddings sync.Map
+	Embeddings    sync.Map
+	maxEmbeddings int
+	evictionCount int64
+	mu            sync.Mutex
+}
+
+type embeddingEntry struct {
+	embedding []float32
+	lastUsed  int64
 }
 
 func NewMMRReranker() *MMRReranker {
-	return &MMRReranker{}
+	return &MMRReranker{
+		maxEmbeddings: DefaultMaxEmbeddings,
+	}
+}
+
+func NewMMRRerankerWithMax(max int) *MMRReranker {
+	if max <= 0 {
+		max = DefaultMaxEmbeddings
+	}
+	return &MMRReranker{
+		maxEmbeddings: max,
+	}
+}
+
+func (r *MMRReranker) evictOldest() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	evictCount := int(float64(r.maxEmbeddings) * 0.2)
+	if evictCount < 100 {
+		evictCount = 100
+	}
+
+	type keyTime struct {
+		key  string
+		time int64
+	}
+	var entries []keyTime
+
+	r.Embeddings.Range(func(key, value interface{}) bool {
+		if k, ok := key.(string); ok {
+			if entry, ok := value.(*embeddingEntry); ok {
+				entries = append(entries, keyTime{key: k, time: entry.lastUsed})
+			}
+		}
+		return true
+	})
+
+	for i := 0; i < len(entries); i++ {
+		for j := i + 1; j < len(entries); j++ {
+			if entries[i].time > entries[j].time {
+				entries[i], entries[j] = entries[j], entries[i]
+			}
+		}
+	}
+
+	for i := 0; i < evictCount && i < len(entries); i++ {
+		r.Embeddings.Delete(entries[i].key)
+	}
+
+	r.evictionCount += int64(evictCount)
 }
 
 func (r *MMRReranker) SetEmbedding(id string, embedding []float32) {
-	r.Embeddings.Store(id, embedding)
+	var count int
+	r.Embeddings.Range(func(_, _ interface{}) bool {
+		count++
+		return true
+	})
+
+	if count >= int(float64(r.maxEmbeddings)*EvictionThreshold) {
+		r.evictOldest()
+	}
+
+	entry := &embeddingEntry{
+		embedding: make([]float32, len(embedding)),
+		lastUsed:  r.evictionCount,
+	}
+	copy(entry.embedding, embedding)
+	r.Embeddings.Store(id, entry)
 }
 
 func (r *MMRReranker) Rerank(hits []*entity.SearchHit, lambda float64) []*entity.SearchHit {
@@ -76,6 +154,13 @@ func (r *MMRReranker) cosineSimilarity(id1, id2 string) float64 {
 
 	if !ok1 || !ok2 {
 		return 0.0
+	}
+
+	entry1, ok1 := emb1Val.(*embeddingEntry)
+	entry2, ok2 := emb2Val.(*embeddingEntry)
+
+	if ok1 && ok2 {
+		return vector.CosineSimilarity(entry1.embedding, entry2.embedding)
 	}
 
 	emb1, ok1 := emb1Val.([]float32)

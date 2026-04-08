@@ -6,6 +6,7 @@ import (
 
 	"github.com/xgsong/MyMemoryGo/internal/domain/entity"
 	"github.com/xgsong/MyMemoryGo/internal/domain/repository"
+	"github.com/xgsong/MyMemoryGo/internal/pkg/errors"
 	"github.com/xgsong/MyMemoryGo/internal/pkg/log"
 )
 
@@ -44,8 +45,16 @@ func (s *MemoryApplicationService) SearchMemories(ctx context.Context, req *Sear
 
 	logger.InfoContext(ctx, "starting hybrid search")
 
-	s.writeMutex.RLock()
-	defer s.writeMutex.RUnlock()
+	// Validate request parameters first
+	if req.Query == "" {
+		return nil, errors.New(errors.CodeInvalidInput, "query cannot be empty")
+	}
+	if req.Limit < 0 {
+		return nil, errors.New(errors.CodeInvalidInput, "limit cannot be negative")
+	}
+	if req.MinScore < 0 || req.MinScore > 1 {
+		return nil, errors.New(errors.CodeInvalidInput, "min_score must be between 0 and 1")
+	}
 
 	// Build search options using builder pattern
 	builder := repository.NewSearchOptionsBuilder().
@@ -56,8 +65,8 @@ func (s *MemoryApplicationService) SearchMemories(ctx context.Context, req *Sear
 	// Apply rerank options if enabled
 	if req.Rerank != nil && req.Rerank.Enabled {
 		lambda := req.Rerank.Lambda
-		if lambda == 0 {
-			lambda = 0.7 // default lambda
+		if lambda < 0 || lambda > 1 {
+			return nil, errors.New(errors.CodeInvalidInput, "lambda must be between 0 and 1")
 		}
 		builder = builder.WithMMR(lambda)
 		logger.DebugContext(ctx, "MMR reranking enabled", "lambda", lambda)
@@ -66,6 +75,9 @@ func (s *MemoryApplicationService) SearchMemories(ctx context.Context, req *Sear
 	// Apply decay options if enabled
 	if req.Decay != nil && req.Decay.Enabled {
 		halfLife := req.Decay.HalfLife
+		if halfLife < 0 {
+			return nil, errors.New(errors.CodeInvalidInput, "half_life cannot be negative")
+		}
 		if halfLife == 0 {
 			halfLife = 720 * time.Hour // default half-life
 		}
@@ -79,14 +91,17 @@ func (s *MemoryApplicationService) SearchMemories(ctx context.Context, req *Sear
 		logger.WarnContext(ctx, "failed to generate query embedding, vector search will be degraded", "error", embedErr)
 	}
 
-	opts := builder.Build()
+	opts, err := builder.Build()
+	if err != nil {
+		return nil, errors.WrapOp(errors.CodeInvalidInput, "SearchMemories", "invalid search options", err)
+	}
 	opts.QueryEmbedding = queryEmbedding
 
 	// Use SearchRepository for hybrid search
 	result, err := s.searchRepo.Search(ctx, req.Query, opts)
 	if err != nil {
 		logger.ErrorContext(ctx, "hybrid search failed", "error", err)
-		return nil, err
+		return nil, errors.WrapOp(errors.CodeDatabase, "SearchMemories", "hybrid search failed", err)
 	}
 
 	logger.InfoContext(ctx, "search completed", "result_count", len(result.Hits), "duration_ms", result.Duration.Milliseconds())

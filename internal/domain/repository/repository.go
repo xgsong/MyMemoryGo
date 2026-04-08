@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/xgsong/MyMemoryGo/internal/domain/entity"
+	"github.com/xgsong/MyMemoryGo/internal/pkg/errors"
 )
 
 // MemoryRepository defines the interface for memory persistence operations.
@@ -85,7 +86,8 @@ type SearchOptions struct {
 	Limit int
 
 	// MinScore is the minimum relevance score (0.0 to 1.0).
-	MinScore float64
+	// Pointer type to distinguish between "not set" and explicit 0.
+	MinScore *float64
 
 	// SourceFilter restricts search to specific source types.
 	SourceFilter []entity.SourceType
@@ -95,7 +97,8 @@ type SearchOptions struct {
 
 	// MMRLambda is the MMR parameter (0.0 to 1.0).
 	// Higher values favor relevance, lower values favor diversity.
-	MMRLambda float64
+	// Pointer type to distinguish between "not set" and explicit 0.
+	MMRLambda *float64
 
 	// UseDecay enables temporal decay scoring.
 	UseDecay bool
@@ -104,10 +107,12 @@ type SearchOptions struct {
 	DecayHalfLife time.Duration
 
 	// VectorWeight is the weight for vector search results (default 0.7).
-	VectorWeight float64
+	// Pointer type to distinguish between "not set" and explicit 0.
+	VectorWeight *float64
 
 	// FulltextWeight is the weight for full-text search results (default 0.3).
-	FulltextWeight float64
+	// Pointer type to distinguish between "not set" and explicit 0.
+	FulltextWeight *float64
 
 	// QueryEmbedding is the pre-computed embedding for the search query.
 	// If nil, vector search will use a fallback score.
@@ -116,11 +121,14 @@ type SearchOptions struct {
 
 // DefaultSearchOptions returns SearchOptions with sensible defaults.
 func DefaultSearchOptions() *SearchOptions {
+	minScore := 0.5
+	vectorWeight := 0.7
+	fulltextWeight := 0.3
 	return &SearchOptions{
 		Limit:          10,
-		MinScore:       0.5,
-		VectorWeight:   0.7,
-		FulltextWeight: 0.3,
+		MinScore:       &minScore,
+		VectorWeight:   &vectorWeight,
+		FulltextWeight: &fulltextWeight,
 	}
 }
 
@@ -142,7 +150,7 @@ func (b *SearchOptionsBuilder) WithLimit(limit int) *SearchOptionsBuilder {
 
 // WithMinScore sets the minimum score.
 func (b *SearchOptionsBuilder) WithMinScore(score float64) *SearchOptionsBuilder {
-	b.opts.MinScore = score
+	b.opts.MinScore = &score
 	return b
 }
 
@@ -155,7 +163,7 @@ func (b *SearchOptionsBuilder) WithSourceFilter(sources []entity.SourceType) *Se
 // WithMMR enables MMR with the given lambda.
 func (b *SearchOptionsBuilder) WithMMR(lambda float64) *SearchOptionsBuilder {
 	b.opts.UseMMR = true
-	b.opts.MMRLambda = lambda
+	b.opts.MMRLambda = &lambda
 	return b
 }
 
@@ -168,14 +176,36 @@ func (b *SearchOptionsBuilder) WithDecay(halfLife time.Duration) *SearchOptionsB
 
 // WithWeights sets the search weights.
 func (b *SearchOptionsBuilder) WithWeights(vector, fulltext float64) *SearchOptionsBuilder {
-	b.opts.VectorWeight = vector
-	b.opts.FulltextWeight = fulltext
+	b.opts.VectorWeight = &vector
+	b.opts.FulltextWeight = &fulltext
 	return b
 }
 
 // Build returns the constructed SearchOptions.
-func (b *SearchOptionsBuilder) Build() *SearchOptions {
-	return b.opts
+// It validates the options before returning.
+func (b *SearchOptionsBuilder) Build() (*SearchOptions, error) {
+	if b.opts.Limit < 0 {
+		return nil, errors.New(errors.CodeInvalidInput, "limit cannot be negative")
+	}
+	if *b.opts.MinScore < 0 || *b.opts.MinScore > 1 {
+		return nil, errors.New(errors.CodeInvalidInput, "min_score must be between 0 and 1")
+	}
+	if *b.opts.VectorWeight < 0 || *b.opts.VectorWeight > 1 {
+		return nil, errors.New(errors.CodeInvalidInput, "vector_weight must be between 0 and 1")
+	}
+	if *b.opts.FulltextWeight < 0 || *b.opts.FulltextWeight > 1 {
+		return nil, errors.New(errors.CodeInvalidInput, "fulltext_weight must be between 0 and 1")
+	}
+	weightsSum := *b.opts.VectorWeight + *b.opts.FulltextWeight
+	if weightsSum < 0.99 || weightsSum > 1.01 { // Allow small floating point error
+		return nil, errors.New(errors.CodeInvalidInput, "vector_weight and fulltext_weight must sum to 1")
+	}
+	if b.opts.MMRLambda != nil {
+		if *b.opts.MMRLambda < 0 || *b.opts.MMRLambda > 1 {
+			return nil, errors.New(errors.CodeInvalidInput, "mmr_lambda must be between 0 and 1")
+		}
+	}
+	return b.opts, nil
 }
 
 // EmbeddingRepository defines the interface for embedding operations.

@@ -3,7 +3,7 @@
 package service
 
 import (
-	"sync"
+	"context"
 
 	"github.com/xgsong/MyMemoryGo/internal/domain/repository"
 )
@@ -15,9 +15,6 @@ type MemoryApplicationService struct {
 	searchRepo    repository.SearchRepository
 	embeddingRepo repository.EmbeddingRepository
 	fileRepo      repository.FileRepository
-
-	// writeMutex protects SQLite concurrent writes
-	writeMutex sync.RWMutex
 }
 
 // NewMemoryApplicationService creates a new application service.
@@ -33,4 +30,10 @@ func NewMemoryApplicationService(
 		embeddingRepo: embeddingRepo,
 		fileRepo:      fileRepo,
 	}
+}
+
+// Embed generates an embedding for the given text.
+// This is exposed for health check purposes.
+func (s *MemoryApplicationService) Embed(ctx context.Context, text string) ([]float32, error) {
+	return s.embeddingRepo.Embed(ctx, text)
 }

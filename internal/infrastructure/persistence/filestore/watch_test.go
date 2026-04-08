@@ -381,7 +381,10 @@ func TestWatch_ResolvePath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := fm.resolvePath(tt.inputPath)
+			got, err := fm.resolvePath(tt.inputPath)
+			if err != nil {
+				t.Errorf("resolvePath() unexpected error: %v", err)
+			}
 			if got != tt.expectedPath {
 				t.Errorf("resolvePath() = %v, want %v", got, tt.expectedPath)
 			}

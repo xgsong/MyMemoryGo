@@ -97,9 +97,6 @@ func (s *MemoryApplicationService) StoreMemory(ctx context.Context, req *StoreMe
 	}
 	memory.Embedding = embedding
 
-	s.writeMutex.Lock()
-	defer s.writeMutex.Unlock()
-
 	if err := s.memoryRepo.Store(ctx, memory); err != nil {
 		logger.ErrorContext(ctx, "failed to store memory", "error", err, "memory_id", memory.ID)
 		return nil, errors.WrapOp(errors.CodeDatabase, "StoreMemory", "failed to store memory", err)

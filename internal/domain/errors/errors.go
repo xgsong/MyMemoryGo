@@ -75,9 +75,11 @@ func NewError(op string, err error, message string) *MemoryError {
 }
 
 // WithFields adds structured fields to the error.
+// Creates a copy to avoid mutating shared sentinel errors.
 func (e *MemoryError) WithFields(fields map[string]interface{}) *MemoryError {
-	e.Fields = fields
-	return e
+	cp := *e
+	cp.Fields = fields
+	return &cp
 }
 
 // Wrap wraps an error with operation context.
@@ -121,10 +123,16 @@ func IsTimeout(err error) bool {
 type ValidationError struct {
 	Field   string
 	Message string
+	Err     error
 }
 
 func (e *ValidationError) Error() string {
 	return fmt.Sprintf("validation error on field '%s': %s", e.Field, e.Message)
+}
+
+// Unwrap returns the underlying error for use with errors.Is and errors.As.
+func (e *ValidationError) Unwrap() error {
+	return e.Err
 }
 
 // NewValidationError creates a new validation error.

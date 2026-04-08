@@ -19,15 +19,9 @@ func (s *Store) Search(ctx context.Context, query string, opts *repository.Searc
 	if opts.Limit == 0 {
 		opts.Limit = 10
 	}
-	if opts.MinScore == 0 {
-		opts.MinScore = 0.5
-	}
-	if opts.VectorWeight == 0 {
-		opts.VectorWeight = 0.7
-	}
-	if opts.FulltextWeight == 0 {
-		opts.FulltextWeight = 0.3
-	}
+	// MinScore already has default from DefaultSearchOptions if not set
+	// VectorWeight already has default from DefaultSearchOptions if not set
+	// FulltextWeight already has default from DefaultSearchOptions if not set
 
 	type searchResult struct {
 		hits []*entity.SearchHit
@@ -58,13 +52,13 @@ func (s *Store) Search(ctx context.Context, query string, opts *repository.Searc
 		fulltextRes.hits = nil
 	}
 
-	merged := s.mergeSearchResults(vectorRes.hits, fulltextRes.hits, opts.VectorWeight, opts.FulltextWeight)
+	merged := s.mergeSearchResults(vectorRes.hits, fulltextRes.hits, *opts.VectorWeight, *opts.FulltextWeight)
 
 	if len(opts.SourceFilter) > 0 {
 		merged = s.filterBySource(merged, opts.SourceFilter)
 	}
 
-	result := s.filterAndLimitHits(merged, opts.MinScore, opts.Limit)
+	result := s.filterAndLimitHits(merged, *opts.MinScore, opts.Limit)
 
 	return &entity.SearchResult{
 		Hits:     result,
@@ -165,7 +159,7 @@ func (s *Store) SearchFulltext(ctx context.Context, query string, opts *reposito
 
 	rows, err := s.db.QueryContext(ctx, ftsQuery, query, opts.Limit*2)
 	if err != nil {
-		return nil, nil
+		return nil, errors.WrapOp(errors.CodeDatabase, "SearchFulltext", "fulltext search query failed", err)
 	}
 	defer rows.Close()
 

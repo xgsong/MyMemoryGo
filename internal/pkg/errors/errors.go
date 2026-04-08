@@ -175,10 +175,18 @@ func IsConfig(err error) bool {
 type ValidationError struct {
 	Field   string
 	Message string
+	Err     error
 }
 
 func (e *ValidationError) Error() string {
+	if e.Err != nil {
+		return fmt.Sprintf("validation error on field '%s': %s: %v", e.Field, e.Message, e.Err)
+	}
 	return fmt.Sprintf("validation error on field '%s': %s", e.Field, e.Message)
+}
+
+func (e *ValidationError) Unwrap() error {
+	return e.Err
 }
 
 func NewValidationError(field, message string) *ValidationError {

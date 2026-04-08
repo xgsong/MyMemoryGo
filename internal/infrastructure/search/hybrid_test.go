@@ -189,11 +189,14 @@ func TestHybridEngine_Search(t *testing.T) {
 			&mockEmbedder{embedding: []float32{0.1, 0.2}},
 		)
 
+		minScore := 0.5
+		vectorWeight := 0.8
+		fulltextWeight := 0.2
 		opts := &repository.SearchOptions{
 			Limit:          5,
-			MinScore:       0.5,
-			VectorWeight:   0.8,
-			FulltextWeight: 0.2,
+			MinScore:       &minScore,
+			VectorWeight:   &vectorWeight,
+			FulltextWeight: &fulltextWeight,
 		}
 
 		result, err := engine.Search(context.Background(), "test query", opts)
@@ -238,7 +241,8 @@ func TestHybridEngine_Search(t *testing.T) {
 		reranker := &mockReranker{}
 		engine.SetReranker(reranker)
 
-		opts := &repository.SearchOptions{UseMMR: true, MMRLambda: 0.6}
+		lambda := 0.6
+		opts := &repository.SearchOptions{UseMMR: true, MMRLambda: &lambda}
 		_, err := engine.Search(context.Background(), "test query", opts)
 		require.NoError(t, err)
 		assert.True(t, reranker.called)
@@ -317,7 +321,8 @@ func TestHybridEngine_SearchVector(t *testing.T) {
 			nil,
 		)
 
-		opts := &repository.SearchOptions{Limit: 5, MinScore: 0.5}
+		minScore := 0.5
+		opts := &repository.SearchOptions{Limit: 5, MinScore: &minScore}
 		result, err := engine.SearchVector(context.Background(), []float32{0.1, 0.2}, opts)
 		require.NoError(t, err)
 		assert.NotNil(t, result)
@@ -447,9 +452,10 @@ func TestHybridEngine_FilterAndLimit(t *testing.T) {
 		&mockEmbedder{embedding: []float32{0.1, 0.2}},
 	)
 
+	minScore := 0.5
 	result, err := engine.Search(context.Background(), "test", &repository.SearchOptions{
 		Limit:    5,
-		MinScore: 0.5,
+		MinScore: &minScore,
 	})
 	require.NoError(t, err)
 

@@ -2,11 +2,11 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/xgsong/MyMemoryGo/internal/domain/entity"
 	domainService "github.com/xgsong/MyMemoryGo/internal/domain/service"
+	"github.com/xgsong/MyMemoryGo/internal/pkg/errors"
 	"github.com/xgsong/MyMemoryGo/internal/pkg/log"
 )
 
@@ -20,14 +20,14 @@ func (s *MemoryApplicationService) SyncIndex(ctx context.Context) error {
 	pattern := "memory/*.md"
 	files, err := s.fileRepo.List(ctx, pattern)
 	if err != nil {
-		return fmt.Errorf("failed to list memory files: %w", err)
+		return errors.WrapOp(errors.CodeDatabase, "SyncIndex", "failed to list memory files", err)
 	}
 
 	// Also check MEMORY.md
 	longTermPath := "MEMORY.md"
 	exists, err := s.fileRepo.Exists(ctx, longTermPath)
 	if err != nil {
-		return fmt.Errorf("failed to check MEMORY.md: %w", err)
+		return errors.WrapOp(errors.CodeDatabase, "SyncIndex", "failed to check MEMORY.md", err)
 	}
 	if exists {
 		files = append(files, longTermPath)
@@ -57,7 +57,7 @@ func (s *MemoryApplicationService) syncFile(ctx context.Context, path string) er
 	// Read file content
 	content, err := s.fileRepo.Read(ctx, path)
 	if err != nil {
-		return err
+		return errors.WrapOp(errors.CodeFilesystem, "syncFile", "failed to read file", err)
 	}
 
 	// Determine source type
@@ -98,19 +98,15 @@ func (s *MemoryApplicationService) syncFile(ctx context.Context, path string) er
 
 	// Validate memory
 	if err := domainService.ValidateMemory(memory); err != nil {
-		return err
+		return errors.WrapOp(errors.CodeValidation, "syncFile", "memory validation failed", err)
 	}
 
 	// Generate embedding before acquiring write lock
 	embedding, err := s.embeddingRepo.Embed(ctx, text)
 	if err != nil {
-		return err
+		return errors.WrapOp(errors.CodeNetwork, "syncFile", "failed to generate embedding", err)
 	}
 	memory.Embedding = embedding
-
-	// Acquire write lock only for the actual store operation
-	s.writeMutex.Lock()
-	defer s.writeMutex.Unlock()
 
 	// Store the memory (file + database)
 	return s.memoryRepo.Store(ctx, memory)

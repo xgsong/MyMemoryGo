@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/xgsong/MyMemoryGo/internal/application/service"
+	"github.com/xgsong/MyMemoryGo/internal/pkg/errors"
 	"github.com/xgsong/MyMemoryGo/internal/pkg/log"
 )
 
@@ -22,13 +23,38 @@ func (s *Server) healthCheck(w http.ResponseWriter, r *http.Request) {
 
 // readinessCheck handles GET /ready.
 func (s *Server) readinessCheck(w http.ResponseWriter, r *http.Request) {
-	respondJSON(w, http.StatusOK, map[string]interface{}{
-		"status": "ready",
+	checks := make(map[string]string)
+	allOK := true
+
+	// Check database connectivity by listing with limit 0
+	_, dbErr := s.memoryApp.ListMemories(r.Context(), &service.ListMemoriesRequest{Limit: 0})
+	if dbErr != nil {
+		checks["database"] = "unavailable: " + dbErr.Error()
+		allOK = false
+	} else {
+		checks["database"] = "ok"
+	}
+
+	// Check embedder connectivity
+	_, embedErr := s.memoryApp.Embed(r.Context(), "ping")
+	if embedErr != nil {
+		checks["embedder"] = "unavailable: " + embedErr.Error()
+		allOK = false
+	} else {
+		checks["embedder"] = "ok"
+	}
+
+	status := "ready"
+	code := http.StatusOK
+	if !allOK {
+		status = "not ready"
+		code = http.StatusServiceUnavailable
+	}
+
+	respondJSON(w, code, map[string]interface{}{
+		"status": status,
 		"time":   time.Now().UTC().Format(time.RFC3339),
-		"checks": map[string]string{
-			"database": "ok",
-			"embedder": "ok",
-		},
+		"checks": checks,
 	})
 }
 
@@ -53,7 +79,11 @@ func (s *Server) storeMemory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	source := sourceFromString(req.Source)
+	source, err := sourceFromString(req.Source)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	appReq := &service.StoreMemoryRequest{
 		Content:  req.Content,
@@ -106,11 +136,25 @@ type listMemoriesRequest struct {
 // listMemories handles GET /api/v1/memories.
 func (s *Server) listMemories(w http.ResponseWriter, r *http.Request) {
 	source := r.URL.Query().Get("source")
-	limit := parseIntParam(r.URL.Query().Get("limit"), 100)
-	offset := parseIntParam(r.URL.Query().Get("offset"), 0)
+	limit, err := parseIntParam(r.URL.Query().Get("limit"), 100)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	offset, err := parseIntParam(r.URL.Query().Get("offset"), 0)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	sourceType, err := sourceFromString(source)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	req := &service.ListMemoriesRequest{
-		Source: sourceFromString(source),
+		Source: sourceType,
 		Limit:  limit,
 		Offset: offset,
 	}
@@ -144,7 +188,11 @@ func (s *Server) deleteMemory(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.memoryApp.DeleteMemory(r.Context(), decodedID); err != nil {
 		log.GetLogger(r.Context()).ErrorContext(r.Context(), "delete memory failed", "error", err)
-		respondError(w, http.StatusInternalServerError, "failed to delete memory")
+		if errors.IsNotFound(err) {
+			respondError(w, http.StatusNotFound, "memory not found")
+		} else {
+			respondError(w, http.StatusInternalServerError, "failed to delete memory")
+		}
 		return
 	}
 
@@ -172,8 +220,13 @@ func (s *Server) searchMemories(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		req.Query = r.URL.Query().Get("q")
-		req.Limit = parseIntParam(r.URL.Query().Get("limit"), 10)
+		req.Query = r.URL.Query().Get("query")
+		var err error
+		req.Limit, err = parseIntParam(r.URL.Query().Get("limit"), 10)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		req.MinScore = parseFloatParam(r.URL.Query().Get("min_score"), 0.0)
 	}
 
@@ -182,11 +235,17 @@ func (s *Server) searchMemories(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sourceFilter, err := sourcesToTypes(req.Sources)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	appReq := &service.SearchMemoriesRequest{
 		Query:        req.Query,
 		Limit:        req.Limit,
 		MinScore:     req.MinScore,
-		SourceFilter: sourcesToTypes(req.Sources),
+		SourceFilter: sourceFilter,
 	}
 
 	resp, err := s.memoryApp.SearchMemories(r.Context(), appReq)

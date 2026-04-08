@@ -100,8 +100,10 @@ func TestMemoryError_WithFields(t *testing.T) {
 
 	result := memErr.WithFields(fields)
 
-	assert.Equal(t, memErr, result) // Should return same pointer
-	assert.Equal(t, fields, memErr.Fields)
+	// WithFields should return a new copy, not modify the original
+	assert.NotEqual(t, memErr, result) // Should return different pointer
+	assert.Equal(t, fields, result.Fields)
+	assert.Nil(t, memErr.Fields) // Original should remain unchanged
 }
 
 func TestNewError(t *testing.T) {

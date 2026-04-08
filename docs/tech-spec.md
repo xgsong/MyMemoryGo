@@ -658,6 +658,18 @@ go run ./cmd/example/main.go
 - ✅ 代码覆盖率 > 90%
 - ✅ 无架构坏味道
 
+**安全与稳定性修复 (代码审查 P0-P2)**：
+- ✅ 路径遍历漏洞修复：resolvePath 返回错误、防御符号链接逃逸、List 方法纳入保护
+- ✅ 哨兵错误并发修改修复：domain/errors 的 WithFields 改为先拷贝再修改
+- ✅ ValidationError 添加 Err 字段和 Unwrap() 方法
+- ✅ 应用层请求参数校验：list.go 验证 Limit/Offset/OrderBy/id
+- ✅ 健康检查实际探测数据库和嵌入服务可用性
+- ✅ GET/POST 搜索参数名统一为 query
+- ✅ Watch 添加 RemoveHandler 清理机制
+- ✅ processEvents goroutine 添加 done channel 生命周期管理
+- ✅ 文件写入改为原子写入（临时文件 + rename）
+- ✅ P0-P2 共 42 项问题全部修复完成，详见 `docs/code-review-report.md`
+
 ### v1.0 (2026-03-09)
 
 **初始版本**：

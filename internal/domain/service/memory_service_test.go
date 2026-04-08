@@ -634,8 +634,9 @@ func TestErrors(t *testing.T) {
 		errWithFields := err.WithFields(map[string]interface{}{
 			"key": "value",
 		})
-		assert.Equal(t, err, errWithFields) // WithFields returns same pointer
+		assert.NotEqual(t, err, errWithFields) // WithFields returns a new copy
 		assert.NotNil(t, errWithFields.Fields)
+		assert.Nil(t, err.Fields) // Original should remain unchanged
 	})
 
 	t.Run("Error interface", func(t *testing.T) {

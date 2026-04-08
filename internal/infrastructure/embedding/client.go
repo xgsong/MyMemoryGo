@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/xgsong/MyMemoryGo/internal/pkg/errors"
@@ -77,6 +78,11 @@ func (c *embedClient) embedBatchWithRetry(ctx context.Context, texts []string) (
 	return nil, errors.WrapOp(errors.CodeNetwork, "embedBatchWithRetry", "max retries exceeded", lastErr)
 }
 
+const (
+	// MaxResponseSize is the maximum allowed response size (10MB)
+	MaxResponseSize = 10 * 1024 * 1024
+)
+
 // callEmbeddingAPI makes the HTTP request to the embedding API.
 func (c *embedClient) callEmbeddingAPI(ctx context.Context, texts []string) ([][]float32, error) {
 	req := embeddingRequest{
@@ -93,6 +99,9 @@ func (c *embedClient) callEmbeddingAPI(ctx context.Context, texts []string) ([][
 	}
 
 	url := c.config.BaseURL
+	if url == "" {
+		return nil, errors.WrapOp(errors.CodeInvalidInput, "callEmbeddingAPI", "base URL cannot be empty", nil)
+	}
 	if url[len(url)-1] != '/' {
 		url += "/"
 	}
@@ -114,7 +123,8 @@ func (c *embedClient) callEmbeddingAPI(ctx context.Context, texts []string) ([][
 	}
 	defer httpResp.Body.Close()
 
-	respBody, err := io.ReadAll(httpResp.Body)
+	// Limit response size to prevent memory issues
+	respBody, err := io.ReadAll(io.LimitReader(httpResp.Body, MaxResponseSize))
 	if err != nil {
 		return nil, errors.WrapOp(errors.CodeNetwork, "callEmbeddingAPI", "read response failed", err)
 	}
@@ -128,9 +138,17 @@ func (c *embedClient) callEmbeddingAPI(ctx context.Context, texts []string) ([][
 		return nil, errors.WrapOp(errors.CodeNetwork, "callEmbeddingAPI", "unmarshal response failed", err)
 	}
 
-	result := make([][]float32, len(resp.Data))
-	for i, d := range resp.Data {
-		result[i] = d.Embedding
+	// Check for empty data
+	if len(resp.Data) == 0 {
+		return nil, errors.WrapOp(errors.CodeNetwork, "callEmbeddingAPI", "empty response data", nil)
+	}
+
+	// Use d.Index to map results correctly, in case order doesn't match
+	result := make([][]float32, len(texts))
+	for _, d := range resp.Data {
+		if d.Index >= 0 && d.Index < len(result) {
+			result[d.Index] = d.Embedding
+		}
 	}
 
 	return result, nil
@@ -138,7 +156,25 @@ func (c *embedClient) callEmbeddingAPI(ctx context.Context, texts []string) ([][
 
 // isNonRetryableError checks if an error should not be retried.
 func isNonRetryableError(err error) bool {
-	// Add logic to identify non-retryable errors
-	// For now, return false to retry all errors
+	if err != nil {
+		// Check for common 4xx errors that shouldn't be retried
+		errStr := err.Error()
+		if containsAny(errStr, []string{
+			"status 400", "status 401", "status 402", "status 403", "status 404",
+			"invalid request", "authentication failed", "permission denied", "not found",
+		}) {
+			return true
+		}
+	}
+	return false
+}
+
+// containsAny checks if any of the substrings are present in the string.
+func containsAny(s string, substrs []string) bool {
+	for _, substr := range substrs {
+		if strings.Contains(s, substr) {
+			return true
+		}
+	}
 	return false
 }

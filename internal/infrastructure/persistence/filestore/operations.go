@@ -13,7 +13,10 @@ func (fm *Manager) Read(ctx context.Context, path string) ([]byte, error) {
 	fm.mu.RLock()
 	defer fm.mu.RUnlock()
 
-	fullPath := fm.resolvePath(path)
+	fullPath, err := fm.resolvePath(path)
+	if err != nil {
+		return nil, err
+	}
 
 	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
 		return nil, errors.ErrNotFound
@@ -27,20 +30,42 @@ func (fm *Manager) Read(ctx context.Context, path string) ([]byte, error) {
 	return content, nil
 }
 
-// Write writes content to a file.
+// Write writes content to a file using atomic write (write to temp file then rename).
 func (fm *Manager) Write(ctx context.Context, path string, content []byte) error {
 	fm.mu.Lock()
 	defer fm.mu.Unlock()
 
-	fullPath := fm.resolvePath(path)
+	fullPath, err := fm.resolvePath(path)
+	if err != nil {
+		return err
+	}
 
 	dir := filepath.Dir(fullPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return errors.WrapOp(errors.CodeFilesystem, "Write", "create directory failed", err)
 	}
 
-	if err := os.WriteFile(fullPath, content, 0644); err != nil {
-		return errors.WrapOp(errors.CodeFilesystem, "Write", "write file failed", err)
+	// Write to a temporary file first, then rename for atomicity
+	tmpFile, err := os.CreateTemp(dir, ".tmp-")
+	if err != nil {
+		return errors.WrapOp(errors.CodeFilesystem, "Write", "create temp file failed", err)
+	}
+	tmpPath := tmpFile.Name()
+
+	if _, err := tmpFile.Write(content); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return errors.WrapOp(errors.CodeFilesystem, "Write", "write temp file failed", err)
+	}
+
+	if err := tmpFile.Close(); err != nil {
+		os.Remove(tmpPath)
+		return errors.WrapOp(errors.CodeFilesystem, "Write", "close temp file failed", err)
+	}
+
+	if err := os.Rename(tmpPath, fullPath); err != nil {
+		os.Remove(tmpPath)
+		return errors.WrapOp(errors.CodeFilesystem, "Write", "rename temp file failed", err)
 	}
 
 	return nil
@@ -51,7 +76,10 @@ func (fm *Manager) Append(ctx context.Context, path string, content []byte) erro
 	fm.mu.Lock()
 	defer fm.mu.Unlock()
 
-	fullPath := fm.resolvePath(path)
+	fullPath, err := fm.resolvePath(path)
+	if err != nil {
+		return err
+	}
 
 	exists := fm.exists(fullPath)
 
@@ -79,7 +107,10 @@ func (fm *Manager) Delete(ctx context.Context, path string) error {
 	fm.mu.Lock()
 	defer fm.mu.Unlock()
 
-	fullPath := fm.resolvePath(path)
+	fullPath, err := fm.resolvePath(path)
+	if err != nil {
+		return err
+	}
 
 	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
 		return errors.ErrNotFound
@@ -97,7 +128,10 @@ func (fm *Manager) Exists(ctx context.Context, path string) (bool, error) {
 	fm.mu.RLock()
 	defer fm.mu.RUnlock()
 
-	fullPath := fm.resolvePath(path)
+	fullPath, err := fm.resolvePath(path)
+	if err != nil {
+		return false, err
+	}
 	return fm.exists(fullPath), nil
 }
 
@@ -106,10 +140,14 @@ func (fm *Manager) List(ctx context.Context, pattern string) ([]string, error) {
 	fm.mu.RLock()
 	defer fm.mu.RUnlock()
 
-	searchPath := filepath.Join(fm.config.WorkspaceDir, pattern)
+	// Validate pattern stays within workspace
+	fullPattern, err := fm.resolvePath(pattern)
+	if err != nil {
+		return nil, err
+	}
 
 	var files []string
-	err := filepath.Walk(fm.config.WorkspaceDir, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(fm.config.WorkspaceDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -117,14 +155,14 @@ func (fm *Manager) List(ctx context.Context, pattern string) ([]string, error) {
 			return nil
 		}
 
-		matched, err := filepath.Match(searchPath, path)
-		if err != nil {
-			return err
+		matched, matchErr := filepath.Match(fullPattern, path)
+		if matchErr != nil {
+			return matchErr
 		}
 		if matched {
-			relPath, err := filepath.Rel(fm.config.WorkspaceDir, path)
-			if err != nil {
-				return err
+			relPath, relErr := filepath.Rel(fm.config.WorkspaceDir, path)
+			if relErr != nil {
+				return relErr
 			}
 			files = append(files, relPath)
 		}
@@ -139,41 +177,64 @@ func (fm *Manager) List(ctx context.Context, pattern string) ([]string, error) {
 	return files, nil
 }
 
-// Helper methods
-
-func (fm *Manager) resolvePath(path string) string {
+// resolvePath resolves and validates a path to ensure it stays within the workspace.
+// Returns an error if the path attempts to traverse outside the workspace.
+func (fm *Manager) resolvePath(path string) (string, error) {
 	// Clean the path to remove any .. or . elements
 	cleaned := filepath.Clean(path)
 
-	// If path is absolute or tries to escape workspace, force it within workspace
-	if filepath.IsAbs(cleaned) {
-		// Check if the absolute path is within the workspace
-		absWorkspace, err := filepath.Abs(fm.config.WorkspaceDir)
-		if err != nil {
-			absWorkspace = fm.config.WorkspaceDir
-		}
-		if !isSubPath(absWorkspace, cleaned) {
-			// Path traversal attempt — confine to workspace
-			return filepath.Join(absWorkspace, filepath.Base(cleaned))
-		}
-		return cleaned
-	}
-
-	// For relative paths, join with workspace and verify it stays within
-	joined := filepath.Join(fm.config.WorkspaceDir, cleaned)
 	absWorkspace, err := filepath.Abs(fm.config.WorkspaceDir)
 	if err != nil {
-		absWorkspace = fm.config.WorkspaceDir
-	}
-	if !isSubPath(absWorkspace, joined) {
-		// Path traversal attempt — confine to workspace
-		return filepath.Join(absWorkspace, filepath.Base(cleaned))
+		return "", errors.WrapOp(errors.CodeFilesystem, "resolvePath", "resolve workspace path failed", err)
 	}
 
-	return joined
+	var resolved string
+	if filepath.IsAbs(cleaned) {
+		resolved = cleaned
+	} else {
+		resolved = filepath.Join(absWorkspace, cleaned)
+	}
+
+	// Evaluate symlinks on the workspace to get the real base
+	evalWorkspace := evalSymlinksSafe(absWorkspace)
+
+	// Evaluate symlinks on the resolved path; for non-existent paths,
+	// walk up to find the deepest existing ancestor and evaluate from there
+	evalResolved := evalSymlinksSafe(resolved)
+
+	if !isSubPath(evalWorkspace, evalResolved) {
+		return "", errors.New(errors.CodeFilesystem, "path traversal detected: path escapes workspace")
+	}
+
+	return resolved, nil
 }
 
-// isSubPath checks if target is within base directory.
+// evalSymlinksSafe evaluates symlinks on a path. If the path doesn't exist,
+// it walks up to find the deepest existing ancestor, evaluates symlinks there,
+// then appends the remaining non-existent components.
+func evalSymlinksSafe(path string) string {
+	eval, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return eval
+	}
+	// Path doesn't exist — walk up to find an existing ancestor
+	dir := filepath.Dir(path)
+	base := filepath.Base(path)
+	for {
+		evalDir, dirErr := filepath.EvalSymlinks(dir)
+		if dirErr == nil {
+			return filepath.Join(evalDir, base)
+		}
+		base = filepath.Join(filepath.Base(dir), base)
+		dir = filepath.Dir(dir)
+		if dir == "/" || dir == "." {
+			// Reached root without finding existing path, return original
+			return path
+		}
+	}
+}
+
+// isSubPath checks if target is within base directory (or equals base).
 func isSubPath(base, target string) bool {
 	// Ensure both paths are absolute and cleaned
 	absBase, err := filepath.Abs(base)
@@ -183,6 +244,10 @@ func isSubPath(base, target string) bool {
 	absTarget, err := filepath.Abs(target)
 	if err != nil {
 		return false
+	}
+	// Target equals base is also valid
+	if absTarget == absBase {
+		return true
 	}
 	// Ensure base ends with separator for proper prefix matching
 	if len(absBase) > 0 && absBase[len(absBase)-1] != filepath.Separator {

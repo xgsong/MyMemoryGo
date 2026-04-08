@@ -42,6 +42,7 @@ type Manager struct {
 	watcher  *fsnotify.Watcher
 	handlers []repository.FileChangeHandler
 	mu       sync.RWMutex
+	done     chan struct{} // signals when processEvents goroutine has exited
 }
 
 // New creates a new file manager instance.
@@ -73,7 +74,15 @@ func (fm *Manager) Close() error {
 	defer fm.mu.Unlock()
 
 	if fm.watcher != nil {
-		return fm.watcher.Close()
+		err := fm.watcher.Close()
+		// Wait for processEvents goroutine to exit
+		if fm.done != nil {
+			<-fm.done
+			fm.done = nil
+		}
+		// Clear handlers
+		fm.handlers = nil
+		return err
 	}
 	return nil
 }
